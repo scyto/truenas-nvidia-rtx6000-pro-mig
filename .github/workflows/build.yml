@@ -151,7 +151,15 @@ jobs:
           chmod +x scripts/patch-driver-version.sh
           ./scripts/patch-driver-version.sh scale-build "${{ inputs.nvidia_driver_version }}"
 
+      - name: Strip debug packages from manifest
+        run: |
+          chmod +x scripts/strip-debug-packages.sh
+          ./scripts/strip-debug-packages.sh scale-build
+
       - name: Build packages
+        id: build-packages
+        timeout-minutes: 330  # 5.5h step timeout; leaves 30 min for cache saves before 6h job timeout
+        continue-on-error: true  # Let job continue to save caches even if this step times out
         run: |
           cd scale-build
           sudo -E make packages
@@ -189,6 +197,13 @@ jobs:
         with:
           path: scale-build/tmp/ccache
           key: ccache-${{ inputs.truenas_version }}-${{ github.run_id }}
+
+      - name: Fail if packages build timed out
+        if: steps.build-packages.outcome == 'failure'
+        run: |
+          echo "ERROR: make packages did not complete (likely timed out)."
+          echo "Caches have been saved — next run will resume from where this one stopped."
+          exit 1
 
       - name: Compress built packages for transfer to Job 2
         run: |
@@ -289,6 +304,11 @@ jobs:
         run: |
           chmod +x scripts/patch-driver-version.sh
           ./scripts/patch-driver-version.sh scale-build "${{ inputs.nvidia_driver_version }}"
+
+      - name: Strip debug packages from manifest
+        run: |
+          chmod +x scripts/strip-debug-packages.sh
+          ./scripts/strip-debug-packages.sh scale-build
 
       - name: Download build state from Job 1
         uses: actions/download-artifact@v4
