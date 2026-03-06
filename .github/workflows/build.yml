@@ -108,19 +108,22 @@ jobs:
           echo "Driver URL verified (HTTP ${HTTP_CODE})"
 
       # ── Granular caches: restore previous build state so scale-build can skip unchanged packages ──
+      # Uses restore/save split so saves run even on timeout/failure (if: always())
 
       # Cache 1: Bootstrap chroot (avoids re-running debootstrap, ~15 min saved)
       - name: Restore bootstrap cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: scale-build/tmp/cache
-          key: bootstrap-${{ inputs.truenas_version }}
+          key: bootstrap-${{ inputs.truenas_version }}-${{ github.run_id }}
+          restore-keys: |
+            bootstrap-${{ inputs.truenas_version }}-
 
       # Cache 2: Built packages + hashes (the big one — enables incremental builds)
-      # Rolling key: each run saves a new cache entry. Restore-keys pick up the latest.
+      # Rolling key: each run saves a new entry. Restore-keys pick up the latest.
       # If we build 80/126 packages before timeout, next run resumes from 80.
       - name: Restore packages cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: |
             scale-build/tmp/pkgdir
@@ -131,7 +134,7 @@ jobs:
 
       # Cache 3: Compiler cache (saves ~2-3h on kernel rebuilds when warm)
       - name: Restore ccache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: scale-build/tmp/ccache
           key: ccache-${{ inputs.truenas_version }}-${{ github.run_id }}
@@ -154,6 +157,38 @@ jobs:
           sudo -E make packages
         env:
           CCACHE: 1
+
+      # ── Save caches (if: always() ensures these run even on timeout/failure) ──
+
+      - name: Fix cache directory permissions
+        if: always()
+        run: |
+          # make packages runs as sudo, so files are root-owned.
+          # GitHub Actions cache needs read access.
+          sudo chown -R runner:runner scale-build/tmp/cache scale-build/tmp/pkgdir scale-build/tmp/pkghashes scale-build/tmp/ccache 2>/dev/null || true
+
+      - name: Save bootstrap cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: scale-build/tmp/cache
+          key: bootstrap-${{ inputs.truenas_version }}-${{ github.run_id }}
+
+      - name: Save packages cache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            scale-build/tmp/pkgdir
+            scale-build/tmp/pkghashes
+          key: pkgs-${{ inputs.truenas_version }}-${{ github.run_id }}
+
+      - name: Save ccache
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: scale-build/tmp/ccache
+          key: ccache-${{ inputs.truenas_version }}-${{ github.run_id }}
 
       - name: Compress built packages for transfer to Job 2
         run: |
