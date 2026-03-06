@@ -175,7 +175,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: build-logs
-          path: scale-build/tmp/logs/
+          path: scale-build/logs/
           retention-days: 3
 
       # ── Save caches (if: always() ensures these run even on timeout/failure) ──
