@@ -166,6 +166,14 @@ jobs:
         env:
           CCACHE: 1
 
+      - name: Upload build logs on failure
+        if: failure() || steps.build-packages.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: scale-build/tmp/logs/
+          retention-days: 3
+
       # ── Save caches (if: always() ensures these run even on timeout/failure) ──
 
       - name: Fix cache directory permissions
