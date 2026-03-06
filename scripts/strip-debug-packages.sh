@@ -2,7 +2,7 @@
 # Strips unnecessary packages from scale-build's build manifest.
 # We only need the NVIDIA sysext, not a full TrueNAS ISO, so we can skip:
 #   - Debug packages (kernel-dbg, openzfs-dbg, scst-dbg) — saves ~2-3h
-#   - truenas_spdk — fails to build on GitHub runners, not needed for GPU
+#   - truenas_spdk, scst — fail to build on GitHub runners, not needed for GPU
 #
 # Usage: ./scripts/strip-debug-packages.sh <scale-build-dir>
 
@@ -23,7 +23,7 @@ with open('${MANIFEST}') as f:
     manifest = yaml.safe_load(f)
 
 # Source packages to skip building
-skip_sources = {'kernel-dbg', 'openzfs-dbg', 'scst-dbg', 'truenas_spdk'}
+skip_sources = {'kernel-dbg', 'openzfs-dbg', 'scst-dbg', 'truenas_spdk', 'scst'}
 
 # Binary packages to skip installing in rootfs
 skip_binaries = {
@@ -32,6 +32,9 @@ skip_binaries = {
     'scst-dbg',
     'openzfs-zfs-modules-dbg',
     'truenas-spdk',
+    'iscsi-scst',
+    'scst',
+    'scstadmin',
 }
 
 # Remove skipped top-level sources
@@ -75,4 +78,4 @@ with open('${MANIFEST}', 'w') as f:
 print('Unnecessary packages stripped from manifest')
 "
 
-echo "Done. Removed: kernel-dbg, openzfs-dbg, scst-dbg, truenas_spdk"
+echo "Done. Removed: kernel-dbg, openzfs-dbg, scst-dbg, scst, truenas_spdk"
