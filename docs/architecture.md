@@ -162,9 +162,11 @@ GitHub Actions provides 10GB of cache storage per repository (shared across all 
 
 | Cache | Key Pattern | Contents | Size | Purpose |
 |-------|------------|----------|------|---------|
-| Bootstrap | `bootstrap-{version}-{run_id}` | `tmp/cache/` | ~1GB | Debian chroot base; avoids re-running debootstrap (~15 min) |
-| Packages | `pkgs-{version}-{run_id}` | `tmp/pkgdir/` + `tmp/pkghashes/` | ~5GB | Built .deb files + content hashes for skip detection |
-| ccache | `ccache-{version}-{run_id}` | `tmp/ccache/` | ~2GB | Compiler cache; saves 2-3h on kernel rebuilds |
+| Bootstrap | `bootstrap-{version}-{run_id}` | `tmp/cache/` | 432 MB | Debian chroot base; avoids re-running debootstrap (~15 min) |
+| Packages | `pkgs-{version}-{run_id}` | `tmp/pkgdir/` + `tmp/pkghashes/` | 1.3 GB | Built .deb files + content hashes for skip detection |
+| ccache | `ccache-{version}-{run_id}` | `tmp/ccache/` | 2.5 GB | Compiler cache; saves 2-3h on kernel rebuilds |
+| APT deps | `apt-deps-{os}-v{n}` | `~/apt-cache/` | 16 MB | Build dependency .deb files |
+| **Total** | | | **~4.2 GB** | Per version, well within 10 GB limit |
 
 **Why restore/save split?** Standard `actions/cache` only saves on job success. Since Job 1 may timeout or fail, we use `actions/cache/restore` to restore and `actions/cache/save` with `if: always()` to save. This ensures partial progress is preserved.
 
@@ -227,7 +229,7 @@ scale-build calculates parallel build threads as `max(cpu_count(), 8) / 4`. On t
 
 ### Cache size constraints
 
-The 10GB GitHub Actions cache limit is shared across all workflows and branches. The three caches total ~8GB, leaving limited room for APT caches or additional workflows. If cache pressure becomes an issue, consider self-hosted runners or reducing the ccache size.
+The 10GB GitHub Actions cache limit is shared across all workflows and branches. At ~4.2 GB per version, there is room for caches from two concurrent versions before eviction kicks in. If cache pressure becomes an issue, consider self-hosted runners or reducing the ccache size.
 
 ## Workflow Permissions
 
