@@ -273,7 +273,7 @@ jobs:
           # Remove existing swapfile if present (runner default is 4GB)
           sudo swapoff /swapfile 2>/dev/null || true
           sudo rm -f /swapfile
-          sudo fallocate -l 16G /swapfile
+          sudo fallocate -l 20G /swapfile
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
           sudo swapon /swapfile
@@ -358,6 +358,9 @@ jobs:
           export TRUENAS_VERSION="${{ inputs.truenas_version }}"
           echo "Build Train: ${TRUENAS_TRAIN}"
           echo "Build Version: ${TRUENAS_VERSION}"
+          echo "Disk and memory before build:"
+          df -h /
+          free -h
           cd scale-build
           sudo -E make update
 
