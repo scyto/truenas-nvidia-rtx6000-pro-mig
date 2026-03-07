@@ -39,7 +39,7 @@ on:
 jobs:
   # ─── Job 1: Build all TrueNAS packages (~5-6h first run, incremental on cache) ─
   build-packages:
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 360
 
     steps:
@@ -75,7 +75,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/apt-cache
-          key: apt-deps-${{ runner.os }}-v1
+          key: apt-deps-${{ runner.os }}-v2
 
       - name: Install build dependencies
         run: |
@@ -96,6 +96,7 @@ jobs:
             libarchive-tools \
             zstd \
             ccache
+          python3 --version
           mkdir -p ~/apt-cache
           cp /var/cache/apt/archives/*.deb ~/apt-cache/ 2>/dev/null || true
 
@@ -243,7 +244,7 @@ jobs:
   # ─── Job 2: Build update image and extract nvidia.raw (~1-2h) ─────────────
   build-update:
     needs: build-packages
-    runs-on: ubuntu-22.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 180
 
     steps:
@@ -319,6 +320,7 @@ jobs:
             rsync \
             libarchive-tools \
             zstd
+          python3 --version
           mkdir -p ~/apt-cache
           cp /var/cache/apt/archives/*.deb ~/apt-cache/ 2>/dev/null || true
 
@@ -357,27 +359,12 @@ jobs:
           python3 -c "
           import pathlib
 
-          # Fix 1: unsquashfs -dest creates the target dir itself and fails if it exists.
+          # Fix: unsquashfs -dest creates the target dir itself and fails if it exists.
           p = pathlib.Path('scale-build/scale_build/extensions.py')
           lines = p.read_text().splitlines(keepends=True)
           out = [l for l in lines if 'os.makedirs(chroot' not in l and 'os.makedirs(self.chroot)' not in l]
           p.write_text(''.join(out))
           print(f'extensions.py: removed {len(lines) - len(out)} os.makedirs line(s)')
-
-          # Fix 2: hashlib.file_digest requires Python 3.11+, runner has 3.10
-          # Patch all 3 files that use it: mtree.py, manifest.py, iso.py
-          import re, glob
-          for pyfile in pathlib.Path('scale-build/scale_build/image').glob('*.py'):
-              code = pyfile.read_text()
-              if 'file_digest' in code:
-                  # Replace hashlib.file_digest(f, 'algo') with hashlib.new('algo', f.read())
-                  patched = re.sub(
-                      r\"hashlib\.file_digest\((\w+),\s*'(\w+)'\)\",
-                      r\"hashlib.new('\2', \1.read())\",
-                      code
-                  )
-                  pyfile.write_text(patched)
-                  print(f'{pyfile.name}: patched file_digest for Python 3.10')
           "
 
       - name: Build update image
