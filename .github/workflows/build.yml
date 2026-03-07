@@ -352,6 +352,16 @@ jobs:
           echo "Disk space:"
           df -h /
 
+      - name: Patch scale-build for unsquashfs compatibility
+        run: |
+          # unsquashfs -dest creates the target dir itself and fails if it exists.
+          # scale-build's extensions.py calls os.makedirs before unsquashfs, causing
+          # "failed to make directory, because File exists". Remove the makedirs.
+          cd scale-build
+          sed -i '/os.makedirs(chroot_base)/d' scale_build/extensions.py
+          sed -i '/os.makedirs(chroot)/d' scale_build/extensions.py
+          echo "Patched extensions.py"
+
       - name: Build update image
         run: |
           export TRUENAS_TRAIN="TrueNAS-SCALE-${{ inputs.train_name }}"
