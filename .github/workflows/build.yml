@@ -36,6 +36,9 @@ on:
         required: false
         default: ''
 
+permissions:
+  contents: write
+
 jobs:
   # ─── Job 1: Build all TrueNAS packages (~5-6h first run, incremental on cache) ─
   build-packages:
