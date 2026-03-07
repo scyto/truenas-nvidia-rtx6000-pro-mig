@@ -365,13 +365,19 @@ jobs:
           print(f'extensions.py: removed {len(lines) - len(out)} os.makedirs line(s)')
 
           # Fix 2: hashlib.file_digest requires Python 3.11+, runner has 3.10
-          p = pathlib.Path('scale-build/scale_build/image/mtree.py')
-          code = p.read_text()
-          old = \"hashlib.file_digest(f, 'sha256').hexdigest()\"
-          new = \"hashlib.sha256(f.read()).hexdigest()\"
-          code = code.replace(old, new)
-          p.write_text(code)
-          print('mtree.py: replaced file_digest with sha256 (Python 3.10 compat)')
+          # Patch all 3 files that use it: mtree.py, manifest.py, iso.py
+          import re, glob
+          for pyfile in pathlib.Path('scale-build/scale_build/image').glob('*.py'):
+              code = pyfile.read_text()
+              if 'file_digest' in code:
+                  # Replace hashlib.file_digest(f, 'algo') with hashlib.new('algo', f.read())
+                  patched = re.sub(
+                      r\"hashlib\.file_digest\((\w+),\s*'(\w+)'\)\",
+                      r\"hashlib.new('\2', \1.read())\",
+                      code
+                  )
+                  pyfile.write_text(patched)
+                  print(f'{pyfile.name}: patched file_digest for Python 3.10')
           "
 
       - name: Build update image
