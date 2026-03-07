@@ -149,6 +149,13 @@ jobs:
           restore-keys: |
             ccache-${{ inputs.truenas_version }}-
 
+      - name: Patch Makefile for modern setuptools compatibility
+        run: |
+          # setuptools ≥72 removed 'setup.py install' support.
+          # Python 3.11 from deadsnakes ships recent pip → latest setuptools → breaks.
+          # Replace 'python3 setup.py install' with 'pip install .' in the Makefile.
+          sed -i 's/python3 setup.py install/pip install ./' scale-build/Makefile
+
       - name: Checkout scale-build sources
         run: |
           cd scale-build
@@ -359,6 +366,10 @@ jobs:
           ls -lh tmp/cache/ 2>/dev/null || echo "(no cache)"
           echo "Disk space:"
           df -h /
+
+      - name: Patch Makefile for modern setuptools compatibility
+        run: |
+          sed -i 's/python3 setup.py install/pip install ./' scale-build/Makefile
 
       - name: Patch scale-build for GitHub runner compatibility
         run: |
