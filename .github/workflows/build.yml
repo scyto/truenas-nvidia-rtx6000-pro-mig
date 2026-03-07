@@ -352,19 +352,26 @@ jobs:
           echo "Disk space:"
           df -h /
 
-      - name: Patch scale-build for unsquashfs compatibility
+      - name: Patch scale-build for GitHub runner compatibility
         run: |
-          # unsquashfs -dest creates the target dir itself and fails if it exists.
-          # scale-build's extensions.py calls os.makedirs before unsquashfs, causing
-          # "failed to make directory, because File exists". Remove the makedirs lines.
           python3 -c "
           import pathlib
+
+          # Fix 1: unsquashfs -dest creates the target dir itself and fails if it exists.
           p = pathlib.Path('scale-build/scale_build/extensions.py')
           lines = p.read_text().splitlines(keepends=True)
           out = [l for l in lines if 'os.makedirs(chroot' not in l and 'os.makedirs(self.chroot)' not in l]
           p.write_text(''.join(out))
-          removed = len(lines) - len(out)
-          print(f'Patched extensions.py: removed {removed} os.makedirs line(s)')
+          print(f'extensions.py: removed {len(lines) - len(out)} os.makedirs line(s)')
+
+          # Fix 2: hashlib.file_digest requires Python 3.11+, runner has 3.10
+          p = pathlib.Path('scale-build/scale_build/image/mtree.py')
+          code = p.read_text()
+          old = \"hashlib.file_digest(f, 'sha256').hexdigest()\"
+          new = \"hashlib.sha256(f.read()).hexdigest()\"
+          code = code.replace(old, new)
+          p.write_text(code)
+          print('mtree.py: replaced file_digest with sha256 (Python 3.10 compat)')
           "
 
       - name: Build update image
