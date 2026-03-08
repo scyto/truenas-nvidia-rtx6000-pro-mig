@@ -18,7 +18,7 @@ set -euo pipefail
 
 # ── Fixed configuration ─────────────────────────────────────────────────────
 POOL="rust"                    # ZFS pool for VM storage
-VM_NAME="github-runner"        # VM name
+VM_NAME="githubrunner"         # VM name (TrueNAS requires alphanumeric only)
 VM_CPUS=8                      # vCPUs
 VM_RAM=32768                   # Memory in MB (32 GB)
 DISK_SIZE="200G"               # VM disk size
