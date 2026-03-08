@@ -44,3 +44,42 @@ if command -v nvidia-smi &>/dev/null; then
     echo "Driver version:"
     nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null || true
 fi
+
+# --- Clean up persistence ---
+echo ""
+echo "=== Cleaning up persistence ==="
+
+# Disable MIG setup service
+systemctl disable nvidia-mig-setup.service 2>/dev/null || true
+
+# Deregister POSTINIT script
+POSTINIT_ID=$(midclt call initshutdownscript.query 2>/dev/null \
+    | python3 -c "
+import sys, json
+try:
+    scripts = json.load(sys.stdin)
+    for s in scripts:
+        if 'nvidia-postinit' in s.get('script', '') or 'nvidia-postinit' in s.get('command', '') or 'nvidia-gpu' in s.get('script', '') or 'nvidia-gpu' in s.get('command', ''):
+            print(s['id'], end='')
+            break
+except:
+    pass
+" 2>/dev/null)
+
+if [ -n "$POSTINIT_ID" ]; then
+    midclt call initshutdownscript.delete "$POSTINIT_ID" 2>/dev/null \
+        && echo "POSTINIT script deregistered (id: ${POSTINIT_ID})" \
+        || echo "WARNING: Failed to deregister POSTINIT script"
+else
+    echo "No POSTINIT script found to deregister"
+fi
+
+# Remove persistent config
+for d in /mnt/*/.config/nvidia-gpu; do
+    if [ -d "$d" ]; then
+        echo "Removing persistent config: $d"
+        rm -rf "$d"
+    fi
+done
+
+echo "Persistence cleanup complete"

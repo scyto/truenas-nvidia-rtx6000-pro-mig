@@ -26,6 +26,15 @@ curl -fsSL https://github.com/scyto/truenas-nvidia-blackwell/releases/latest/dow
 
 The script automatically detects your TrueNAS version and downloads the matching release.
 
+To also set up MIG persistence (auto-recreates instances after reboot and survives TrueNAS updates):
+
+```bash
+curl -fsSL https://github.com/scyto/truenas-nvidia-blackwell/releases/latest/download/install.sh \
+  | sudo bash -s -- --mig-profiles=47,47,14,14 --pool=fast
+```
+
+See `sudo ./install.sh --help` for all options.
+
 ## Manual Install
 
 1. Download `nvidia.raw` and `nvidia.raw.sha256` from [Releases](https://github.com/scyto/truenas-nvidia-blackwell/releases)
@@ -191,12 +200,51 @@ midclt call app.update "APP_NAME" '{"values": {"resources": {"gpus": {"use_all_g
 
 Replace `APP_NAME` with your app name (e.g., `plex`, `frigate`), `PCI_SLOT` with the PCI address from `app.gpu_choices` (e.g., `0000:0f:00.0`), and the UUID with the MIG device UUID from `nvidia-smi -L`.
 
+### Step 6: Enable persistence across reboots
+
+MIG instances are volatile and don't survive reboots. The install script can configure automatic recreation:
+
+```bash
+# During install (or re-run later):
+sudo ./install.sh --mig-profiles=47,47,14,14 --pool=fast
+```
+
+This sets up:
+- **`nvidia-mig-setup.service`** — systemd service (baked into sysext) that recreates MIG instances on boot before Docker starts
+- **`mig.conf`** — stored on your persistent pool at `/mnt/<pool>/.config/nvidia-gpu/mig.conf`
+- **Automatic UUID remapping** — after recreating instances, the service finds all TrueNAS apps with MIG GPU assignments and updates them to the new compute-only MIG UUID
+
+You can also write the config manually:
+
+```bash
+mkdir -p /mnt/fast/.config/nvidia-gpu
+cat > /mnt/fast/.config/nvidia-gpu/mig.conf <<EOF
+MIG_PROFILES=47,47,14,14
+EOF
+```
+
+### Step 7: Survive TrueNAS updates
+
+TrueNAS updates recreate `/usr` from scratch, wiping the custom nvidia.raw. The install script registers a POSTINIT script that automatically reinstalls it:
+
+- Stores a backup of `nvidia.raw` on your persistent pool
+- Registers a TrueNAS POSTINIT script (persists in DB across updates)
+- On each boot, compares checksums — only reinstalls if nvidia.raw has changed or is missing
+- After reinstalling: merges sysext, recreates MIG instances, remaps UUIDs, restarts Docker with NVIDIA
+
+This is set up automatically by `install.sh`. No manual steps required.
+
+To check the POSTINIT registration:
+
+```bash
+midclt call initshutdownscript.query | python3 -m json.tool
+```
+
 ### Important Notes
 
-- MIG devices are **not persistent across reboots**. Use [nvidia-mig-parted](https://github.com/NVIDIA/mig-parted) for automation, or create a startup script to recreate instances.
 - **Stop all GPU workloads** (Docker apps, containers) before enabling/disabling MIG mode or creating/destroying instances.
 - `+gfx` instances can run both CUDA and graphics workloads. Standard instances are CUDA-only. For most TrueNAS container workloads (Plex, Jellyfin, Frigate), standard compute profiles are sufficient.
-- MIG instance UUIDs change each time instances are recreated, so app GPU assignments will need updating after a reboot if you recreate instances.
+- MIG instance UUIDs change each time instances are recreated, but the persistence service handles remapping automatically.
 
 ## Building from Source
 
@@ -236,7 +284,10 @@ TrueNAS releases auto-trigger builds because kernel modules must match the exact
 sudo ./restore.sh
 ```
 
-This restores the backup created during installation.
+This restores the backup created during installation. It also:
+- Deregisters the POSTINIT script from TrueNAS
+- Removes persistent config from `/mnt/<pool>/.config/nvidia-gpu/`
+- Disables the `nvidia-mig-setup.service`
 
 ## Credits
 

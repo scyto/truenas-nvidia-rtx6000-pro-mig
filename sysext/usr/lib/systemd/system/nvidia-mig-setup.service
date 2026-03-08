@@ -1,0 +1,13 @@
+[Unit]
+Description=NVIDIA MIG Instance Setup
+After=nvidia-persistenced.service
+Before=docker.service
+ConditionPathExists=/usr/bin/nvidia-smi
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/nvidia-mig-setup
+
+[Install]
+WantedBy=multi-user.target

@@ -5,12 +5,47 @@
 #
 # Usage: curl -fsSL <release-url>/install.sh | sudo bash
 #    or: sudo ./install.sh [path-to-nvidia.raw]
+#    or: sudo ./install.sh --mig-profiles=47,47,14,14 --pool=fast
 
 set -euo pipefail
 
 REPO="scyto/truenas-nvidia-blackwell"
 SYSEXT_DIR="/usr/share/truenas/sysext-extensions"
 NVIDIA_RAW="${SYSEXT_DIR}/nvidia.raw"
+
+# --- Parse CLI arguments ---
+LOCAL_RAW=""
+MIG_PROFILES=""
+POOL_NAME=""
+PERSIST_PATH=""
+
+for arg in "$@"; do
+    case "$arg" in
+        --mig-profiles=*) MIG_PROFILES="${arg#*=}" ;;
+        --pool=*) POOL_NAME="${arg#*=}" ;;
+        --persist-path=*) PERSIST_PATH="${arg#*=}" ;;
+        --help)
+            echo "Usage: sudo ./install.sh [OPTIONS] [path-to-nvidia.raw]"
+            echo ""
+            echo "Options:"
+            echo "  --mig-profiles=PROFILES  MIG profile IDs (e.g., 47,47,14,14)"
+            echo "  --pool=NAME              ZFS pool for persistent config (e.g., fast)"
+            echo "  --persist-path=PATH      Exact path for persistent config"
+            echo "  --help                   Show this help"
+            echo ""
+            echo "Examples:"
+            echo "  sudo ./install.sh --mig-profiles=47,47,14,14 --pool=fast"
+            echo "  sudo ./install.sh --mig-profiles=14,14,14,14"
+            echo "  curl -fsSL <url>/install.sh | sudo bash"
+            exit 0
+            ;;
+        *)
+            if [ -f "$arg" ]; then
+                LOCAL_RAW="$arg"
+            fi
+            ;;
+    esac
+done
 
 cleanup() {
     rm -f /tmp/nvidia.raw /tmp/nvidia.raw.sha256
@@ -19,9 +54,9 @@ cleanup() {
 trap cleanup EXIT
 
 # If a local path is provided, use it; otherwise download from GitHub releases
-if [ "${1:-}" != "" ] && [ -f "${1:-}" ]; then
-    echo "Using local nvidia.raw: $1"
-    cp "$1" /tmp/nvidia.raw
+if [ -n "$LOCAL_RAW" ]; then
+    echo "Using local nvidia.raw: $LOCAL_RAW"
+    cp "$LOCAL_RAW" /tmp/nvidia.raw
 else
     # Detect TrueNAS version
     VERSION=$(midclt call system.info | python3 -c "import sys,json; print(json.load(sys.stdin)['version'])")
@@ -144,3 +179,175 @@ if command -v nvidia-smi &>/dev/null; then
 else
     echo "nvidia-smi not found — you may need to restart Docker services"
 fi
+
+# ==========================================================================
+# Persistence setup — survives reboots and TrueNAS updates
+# ==========================================================================
+
+echo ""
+echo "=== Setting up persistence ==="
+
+# --- Detect persistent storage pool ---
+if [ -n "$PERSIST_PATH" ]; then
+    PERSIST_DIR="$PERSIST_PATH"
+elif [ -n "$POOL_NAME" ]; then
+    PERSIST_DIR="/mnt/${POOL_NAME}/.config/nvidia-gpu"
+else
+    # Auto-detect: first pool that isn't boot-pool
+    POOL_NAME=$(zpool list -H -o name 2>/dev/null | grep -v '^boot-pool$' | head -1)
+    if [ -n "$POOL_NAME" ]; then
+        PERSIST_DIR="/mnt/${POOL_NAME}/.config/nvidia-gpu"
+        echo "Auto-detected pool: ${POOL_NAME}"
+    else
+        echo "WARNING: No ZFS pool found (excluding boot-pool). Skipping persistence setup."
+        echo "  Re-run with --pool=<name> or --persist-path=<path> to enable persistence."
+        exit 0
+    fi
+fi
+
+echo "Persistent config directory: ${PERSIST_DIR}"
+mkdir -p "$PERSIST_DIR"
+
+# --- Backup nvidia.raw to persistent storage ---
+echo "Backing up nvidia.raw to persistent storage..."
+cp /tmp/nvidia.raw "${PERSIST_DIR}/nvidia.raw"
+
+# --- Write POSTINIT script to persistent storage ---
+echo "Writing POSTINIT script..."
+cat > "${PERSIST_DIR}/nvidia-postinit.sh" <<'POSTINIT_EOF'
+#!/usr/bin/env bash
+# TrueNAS POSTINIT script: reinstalls nvidia.raw sysext after OS updates.
+# Stored on persistent pool; registered via midclt during install.
+# Idempotent — safe to run on every boot.
+
+set -uo pipefail
+
+log() { echo "[nvidia-postinit] $*"; }
+
+# --- Find persistent config via glob ---
+PERSIST_DIR=""
+for d in /mnt/*/.config/nvidia-gpu; do
+    [ -d "$d" ] && PERSIST_DIR="$d" && break
+done
+
+if [ -z "$PERSIST_DIR" ]; then
+    log "No persistent config found at /mnt/*/.config/nvidia-gpu/, nothing to do"
+    exit 0
+fi
+
+NVIDIA_RAW_BACKUP="${PERSIST_DIR}/nvidia.raw"
+SYSEXT_TARGET="/usr/share/truenas/sysext-extensions/nvidia.raw"
+
+if [ ! -f "$NVIDIA_RAW_BACKUP" ]; then
+    log "No nvidia.raw backup at ${NVIDIA_RAW_BACKUP}, nothing to do"
+    exit 0
+fi
+
+# --- Compare checksums ---
+if [ -f "$SYSEXT_TARGET" ]; then
+    INSTALLED_SUM=$(sha256sum "$SYSEXT_TARGET" | awk '{print $1}')
+    BACKUP_SUM=$(sha256sum "$NVIDIA_RAW_BACKUP" | awk '{print $1}')
+    if [ "$INSTALLED_SUM" = "$BACKUP_SUM" ]; then
+        log "nvidia.raw already matches backup, skipping"
+        exit 0
+    fi
+    log "nvidia.raw differs from backup (update detected), reinstalling..."
+else
+    log "nvidia.raw missing, installing from backup..."
+fi
+
+# --- Reinstall nvidia.raw ---
+log "Unmerging sysext..."
+systemd-sysext unmerge 2>/dev/null || true
+
+log "Making /usr writable..."
+USR_DATASET=$(zfs list -H -o name /usr 2>/dev/null)
+if [ -n "$USR_DATASET" ]; then
+    zfs set readonly=off "$USR_DATASET"
+fi
+
+log "Copying nvidia.raw from backup..."
+cp "$NVIDIA_RAW_BACKUP" "$SYSEXT_TARGET"
+
+if [ -n "$USR_DATASET" ]; then
+    zfs set readonly=on "$USR_DATASET"
+fi
+
+log "Merging sysext..."
+systemd-sysext merge
+
+log "Reloading systemd..."
+systemctl daemon-reload
+
+# --- Start MIG setup service (recreates instances + remaps UUIDs) ---
+if systemctl list-unit-files nvidia-mig-setup.service &>/dev/null; then
+    log "Starting nvidia-mig-setup.service..."
+    systemctl start nvidia-mig-setup.service 2>/dev/null || log "WARNING: nvidia-mig-setup failed"
+fi
+
+# --- Restart Docker with NVIDIA support ---
+log "Re-enabling NVIDIA in Docker..."
+midclt call docker.update '{"nvidia": true}' 2>/dev/null \
+    || log "WARNING: Failed to re-enable NVIDIA in Docker"
+
+log "nvidia.raw reinstalled successfully"
+exit 0
+POSTINIT_EOF
+chmod +x "${PERSIST_DIR}/nvidia-postinit.sh"
+
+# --- Register POSTINIT script via midclt ---
+POSTINIT_SCRIPT="${PERSIST_DIR}/nvidia-postinit.sh"
+echo "Registering POSTINIT script..."
+
+EXISTING_ID=$(midclt call initshutdownscript.query 2>/dev/null \
+    | python3 -c "
+import sys, json
+try:
+    scripts = json.load(sys.stdin)
+    for s in scripts:
+        if 'nvidia-postinit' in s.get('script', '') or 'nvidia-gpu' in s.get('script', ''):
+            print(s['id'], end='')
+            break
+except:
+    pass
+" 2>/dev/null)
+
+if [ -n "$EXISTING_ID" ]; then
+    echo "POSTINIT script already registered (id: ${EXISTING_ID}), updating..."
+    midclt call initshutdownscript.update "$EXISTING_ID" "{\"type\": \"COMMAND\", \"command\": \"${POSTINIT_SCRIPT}\", \"when\": \"POSTINIT\", \"enabled\": true, \"comment\": \"Reinstall custom NVIDIA sysext after TrueNAS updates\"}" 2>/dev/null \
+        || echo "WARNING: Failed to update POSTINIT script"
+else
+    midclt call initshutdownscript.create "{\"type\": \"COMMAND\", \"command\": \"${POSTINIT_SCRIPT}\", \"when\": \"POSTINIT\", \"enabled\": true, \"comment\": \"Reinstall custom NVIDIA sysext after TrueNAS updates\"}" 2>/dev/null \
+        || echo "WARNING: Failed to register POSTINIT script"
+    echo "POSTINIT script registered"
+fi
+
+# --- MIG configuration ---
+if [ -n "$MIG_PROFILES" ]; then
+    echo ""
+    echo "=== MIG Configuration ==="
+    cat > "${PERSIST_DIR}/mig.conf" <<MIGEOF
+# MIG profile IDs passed to: nvidia-smi mig -cgi <PROFILES> -C
+# See available profiles: nvidia-smi mig -lgip
+MIG_PROFILES=${MIG_PROFILES}
+MIGEOF
+    echo "MIG config written to ${PERSIST_DIR}/mig.conf"
+    echo "  Profiles: ${MIG_PROFILES}"
+
+    # Enable the MIG setup service
+    systemctl daemon-reload 2>/dev/null || true
+    systemctl enable nvidia-mig-setup.service 2>/dev/null \
+        && echo "nvidia-mig-setup.service enabled" \
+        || echo "WARNING: Could not enable nvidia-mig-setup.service (may not be in sysext yet)"
+fi
+
+echo ""
+echo "=== Persistence setup complete ==="
+echo ""
+echo "Persistent config: ${PERSIST_DIR}/"
+echo "  nvidia.raw      — backup for post-update reinstall"
+echo "  nvidia-postinit.sh — runs on every boot (registered as POSTINIT)"
+[ -n "$MIG_PROFILES" ] && echo "  mig.conf         — MIG profiles: ${MIG_PROFILES}"
+echo ""
+echo "After reboot, MIG instances will be automatically recreated"
+echo "and app GPU UUIDs will be remapped."

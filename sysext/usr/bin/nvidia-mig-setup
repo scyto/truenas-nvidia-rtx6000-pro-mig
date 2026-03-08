@@ -1,0 +1,193 @@
+#!/usr/bin/env bash
+# Recreates MIG instances on boot from persistent config.
+# Baked into nvidia.raw sysext; runs as a systemd oneshot before docker.service.
+#
+# Config file: /mnt/<pool>/.config/nvidia-gpu/mig.conf
+# Never exits non-zero — must not block boot.
+
+set -uo pipefail
+
+log() { echo "[nvidia-mig-setup] $*"; }
+
+# --- Find config via glob (handles any pool name) ---
+CONFIG=""
+for f in /mnt/*/.config/nvidia-gpu/mig.conf; do
+    [ -f "$f" ] && CONFIG="$f" && break
+done
+
+if [ -z "$CONFIG" ]; then
+    log "No MIG config found at /mnt/*/.config/nvidia-gpu/mig.conf, skipping"
+    exit 0
+fi
+
+log "Using config: $CONFIG"
+# shellcheck disable=SC1090
+source "$CONFIG"
+
+if [ -z "${MIG_PROFILES:-}" ]; then
+    log "MIG_PROFILES not set in $CONFIG, skipping"
+    exit 0
+fi
+
+# --- Check MIG mode ---
+MIG_MODE=$(nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader 2>/dev/null || echo "N/A")
+if [ "$MIG_MODE" != "Enabled" ]; then
+    log "MIG mode not enabled (current: $MIG_MODE), skipping"
+    exit 0
+fi
+
+# --- Recreate MIG instances (idempotent) ---
+log "Destroying existing MIG instances..."
+nvidia-smi mig -dci 2>/dev/null || true
+nvidia-smi mig -dgi 2>/dev/null || true
+
+log "Creating MIG instances: $MIG_PROFILES"
+if ! nvidia-smi mig -cgi "$MIG_PROFILES" -C; then
+    log "ERROR: Failed to create MIG instances"
+    exit 0
+fi
+
+log "MIG instances created successfully"
+nvidia-smi mig -lgi 2>/dev/null || true
+
+# --- Remap app GPU UUIDs ---
+# Find the first compute-only MIG instance UUID (non-gfx profile).
+# Profile IDs for compute-only: 14 (1g.24gb), 5 (2g.48gb), 0 (4g.96gb)
+# Profile IDs for +gfx: 47 (1g.24gb+gfx), 35 (2g.48gb+gfx), 32 (4g.96gb+gfx)
+
+COMPUTE_GI=""
+while IFS= read -r line; do
+    # Look for GPU instance lines with non-gfx profile IDs
+    if echo "$line" | grep -qE 'Profile ID\s+:\s+(14|5|0)\b'; then
+        COMPUTE_GI=$(echo "$line" | grep -oP 'ID\s+:\s+\K[0-9]+' | head -1)
+        break
+    fi
+done < <(nvidia-smi mig -lgi 2>/dev/null)
+
+if [ -z "$COMPUTE_GI" ]; then
+    log "No compute-only MIG instance found, skipping UUID remap"
+    exit 0
+fi
+
+# Get the MIG UUID for this GPU instance
+COMPUTE_UUID=""
+while IFS= read -r line; do
+    if echo "$line" | grep -qP "MIG\s+\S+\s+Device\s+"; then
+        CURRENT_UUID=$(echo "$line" | grep -oP 'UUID:\s+\K[^)]+')
+        # Check if this MIG device belongs to our compute GI
+        CURRENT_GI=$(echo "$line" | grep -oP 'Device\s+\K[0-9]+')
+        if [ "$CURRENT_GI" = "$COMPUTE_GI" ]; then
+            COMPUTE_UUID="$CURRENT_UUID"
+            break
+        fi
+    fi
+done < <(nvidia-smi -L 2>/dev/null)
+
+# Alternative: parse nvidia-smi -L more directly
+# The MIG device listing order matches the GI creation order
+if [ -z "$COMPUTE_UUID" ]; then
+    # Fallback: get all MIG UUIDs and use nvidia-smi mig -lgi to find compute ones
+    ALL_MIG_UUIDS=()
+    while IFS= read -r line; do
+        if echo "$line" | grep -qP 'MIG.*UUID:'; then
+            uuid=$(echo "$line" | grep -oP 'UUID:\s+\K[^)]+')
+            ALL_MIG_UUIDS+=("$uuid")
+        fi
+    done < <(nvidia-smi -L 2>/dev/null)
+
+    # Get GI profile IDs in order
+    GI_PROFILES=()
+    while IFS= read -r line; do
+        if echo "$line" | grep -qP 'Profile ID\s+:'; then
+            pid=$(echo "$line" | grep -oP 'Profile ID\s+:\s+\K[0-9]+')
+            GI_PROFILES+=("$pid")
+        fi
+    done < <(nvidia-smi mig -lgi 2>/dev/null)
+
+    # Find first compute-only (non-gfx) UUID
+    for i in "${!GI_PROFILES[@]}"; do
+        pid="${GI_PROFILES[$i]}"
+        if [ "$pid" = "14" ] || [ "$pid" = "5" ] || [ "$pid" = "0" ]; then
+            if [ "$i" -lt "${#ALL_MIG_UUIDS[@]}" ]; then
+                COMPUTE_UUID="${ALL_MIG_UUIDS[$i]}"
+                break
+            fi
+        fi
+    done
+fi
+
+if [ -z "$COMPUTE_UUID" ]; then
+    log "Could not determine compute-only MIG UUID, skipping app remap"
+    exit 0
+fi
+
+log "First compute-only MIG UUID: $COMPUTE_UUID"
+
+# --- Update TrueNAS app GPU assignments ---
+# Wait for middleware to be ready (it may still be starting)
+for attempt in 1 2 3 4 5; do
+    if midclt call system.ready 2>/dev/null | grep -q true; then
+        break
+    fi
+    log "Waiting for TrueNAS middleware (attempt $attempt/5)..."
+    sleep 5
+done
+
+# Get GPU PCI slot
+PCI_SLOT=$(midclt call app.gpu_choices 2>/dev/null \
+    | python3 -c "
+import sys, json
+try:
+    choices = json.load(sys.stdin)
+    # Find PCI slot that has NVIDIA in description
+    for slot, desc in choices.items():
+        if 'nvidia' in desc.lower() or 'NVIDIA' in desc:
+            print(slot, end='')
+            break
+except:
+    pass
+" 2>/dev/null)
+
+if [ -z "$PCI_SLOT" ]; then
+    log "Could not detect GPU PCI slot, skipping app remap"
+    exit 0
+fi
+
+log "GPU PCI slot: $PCI_SLOT"
+
+# Query all apps and find ones with existing MIG UUID assignments
+midclt call app.query 2>/dev/null | python3 -c "
+import sys, json
+
+try:
+    apps = json.load(sys.stdin)
+except:
+    sys.exit(0)
+
+pci_slot = '$PCI_SLOT'
+new_uuid = '$COMPUTE_UUID'
+
+for app in apps:
+    name = app.get('name', '')
+    # Navigate the nested config to find GPU selection
+    active_workloads = app.get('active_workloads', {})
+    # Check current config for nvidia_gpu_selection
+    config = app.get('config', {}) or {}
+    resources = config.get('resources', {}) or {}
+    gpus = resources.get('gpus', {}) or {}
+    gpu_sel = gpus.get('nvidia_gpu_selection', {}) or {}
+
+    for slot, slot_cfg in gpu_sel.items():
+        if isinstance(slot_cfg, dict) and slot_cfg.get('uuid', ''):
+            old_uuid = slot_cfg['uuid']
+            if old_uuid.startswith('MIG-') and old_uuid != new_uuid:
+                print(f'{name}:{old_uuid}')
+" 2>/dev/null | while IFS=: read -r app_name old_uuid; do
+    log "Updating $app_name: $old_uuid -> $COMPUTE_UUID"
+    midclt call app.update "$app_name" "{\"values\":{\"resources\":{\"gpus\":{\"use_all_gpus\":false,\"nvidia_gpu_selection\":{\"$PCI_SLOT\":{\"use_gpu\":true,\"uuid\":\"$COMPUTE_UUID\"}}}}}}" 2>/dev/null \
+        && log "  Updated $app_name successfully" \
+        || log "  WARNING: Failed to update $app_name"
+done
+
+log "MIG setup complete"
+exit 0

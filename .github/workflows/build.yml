@@ -470,10 +470,33 @@ jobs:
           echo "Rebuilt nvidia.raw with displaymodeselector:"
           ls -lh nvidia.raw
 
+      - name: Inject MIG setup service into sysext
+        run: |
+          echo "Injecting MIG setup service into nvidia.raw..."
+          mkdir -p /tmp/nvidia-mig-inject
+          sudo unsquashfs -d /tmp/nvidia-mig-inject nvidia.raw
+
+          # Add MIG setup script
+          sudo cp sysext/usr/bin/nvidia-mig-setup /tmp/nvidia-mig-inject/usr/bin/nvidia-mig-setup
+          sudo chmod +x /tmp/nvidia-mig-inject/usr/bin/nvidia-mig-setup
+
+          # Add systemd service
+          sudo mkdir -p /tmp/nvidia-mig-inject/usr/lib/systemd/system
+          sudo cp sysext/usr/lib/systemd/system/nvidia-mig-setup.service /tmp/nvidia-mig-inject/usr/lib/systemd/system/
+
+          # Enable the service (create WantedBy symlink)
+          sudo mkdir -p /tmp/nvidia-mig-inject/usr/lib/systemd/system/multi-user.target.wants
+          sudo ln -sf ../nvidia-mig-setup.service /tmp/nvidia-mig-inject/usr/lib/systemd/system/multi-user.target.wants/nvidia-mig-setup.service
+
+          sudo mksquashfs /tmp/nvidia-mig-inject nvidia.raw -noappend -comp zstd
+          sudo rm -rf /tmp/nvidia-mig-inject
+          echo "Rebuilt nvidia.raw with MIG setup service:"
+          ls -lh nvidia.raw
+
       - name: List sysext contents
         run: |
           echo "=== nvidia.raw sysext contents (key binaries) ==="
-          sudo unsquashfs -l nvidia.raw | grep -iE '(nvidia-smi|nvidia-persistenced|nvidia-fabric|displaymode|nvidia-cuda-mps|usr/bin/|usr/lib/x86_64)' | head -50
+          sudo unsquashfs -l nvidia.raw | grep -iE '(nvidia-smi|nvidia-persistenced|nvidia-fabric|displaymode|nvidia-cuda-mps|nvidia-mig|usr/bin/|usr/lib/x86_64|systemd/system)' | head -60
           echo "=== Full size ==="
           ls -lh nvidia.raw
 
@@ -533,6 +556,7 @@ jobs:
             artifacts/extensions/nvidia.raw.sha256
             scripts/install.sh
             scripts/restore.sh
+            scripts/nvidia-postinit.sh
           draft: false
           prerelease: false
         env:
