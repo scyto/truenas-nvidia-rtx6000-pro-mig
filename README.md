@@ -121,14 +121,18 @@ nvidia-smi --query-gpu=mig.mode.current --format=csv
 nvidia-smi mig -lgip
 
 # Create instances (examples):
-# 4x 24GB instances:
-sudo nvidia-smi mig -cgi 19,19,19,19 -C
+# 4x 24GB instances (profile 14):
+sudo nvidia-smi mig -cgi 14,14,14,14 -C
 
-# 2x 48GB instances:
-sudo nvidia-smi mig -cgi 14,14 -C
+# 2x 48GB instances (profile 5):
+sudo nvidia-smi mig -cgi 5,5 -C
 
-# 1x 96GB (full GPU):
-# Simply don't create instances, or use the full profile
+# 1x 96GB full GPU (profile 0):
+sudo nvidia-smi mig -cgi 0 -C
+
+# With graphics API support (unique to RTX PRO 6000 Blackwell):
+# 4x 24GB +gfx (profile 47):
+sudo nvidia-smi mig -cgi 47,47,47,47 -C
 
 # Verify
 nvidia-smi mig -lgi
