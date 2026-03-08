@@ -164,12 +164,17 @@ systemd-sysext merge
 systemctl daemon-reload
 midclt call docker.update '{"nvidia": true}'
 
-# Start nvidia-persistenced (provides persistence mode for GPU state)
+# Enable GPU persistence mode
 if systemctl list-unit-files nvidia-persistenced.service &>/dev/null; then
     echo "Starting nvidia-persistenced..."
     systemctl start nvidia-persistenced.service 2>/dev/null \
         && echo "nvidia-persistenced started" \
         || echo "WARNING: Could not start nvidia-persistenced"
+else
+    echo "Enabling persistence mode via nvidia-smi..."
+    nvidia-smi -pm 1 2>/dev/null \
+        && echo "Persistence mode enabled" \
+        || echo "WARNING: Could not enable persistence mode"
 fi
 
 echo ""
@@ -293,10 +298,13 @@ systemd-sysext merge
 log "Reloading systemd..."
 systemctl daemon-reload
 
-# --- Start nvidia-persistenced ---
+# --- Enable GPU persistence mode ---
 if systemctl list-unit-files nvidia-persistenced.service &>/dev/null; then
     log "Starting nvidia-persistenced..."
     systemctl start nvidia-persistenced.service 2>/dev/null || log "WARNING: nvidia-persistenced failed"
+else
+    log "Enabling persistence mode via nvidia-smi..."
+    nvidia-smi -pm 1 2>/dev/null || log "WARNING: Could not enable persistence mode"
 fi
 
 # --- Start MIG setup service (recreates instances + remaps UUIDs) ---
@@ -360,16 +368,38 @@ MIGEOF
         && echo "nvidia-mig-setup.service enabled" \
         || echo "WARNING: Could not enable nvidia-mig-setup.service"
 
-    # Enable MIG mode on the GPU (requires reboot to take effect)
+    # Enable MIG mode on the GPU
     MIG_CURRENT=$(nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader 2>/dev/null || echo "N/A")
     if [ "$MIG_CURRENT" != "Enabled" ]; then
-        echo "Enabling MIG mode (pending reboot)..."
+        echo "Enabling MIG mode..."
         nvidia-smi -mig 1 2>/dev/null \
-            && echo "MIG mode enabled (pending). Reboot required to activate." \
-            || echo "WARNING: Could not enable MIG mode"
-        NEEDS_REBOOT=true
+            || { echo "WARNING: Could not enable MIG mode"; }
+
+        # Check if MIG activated immediately or needs reboot
+        MIG_CURRENT=$(nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader 2>/dev/null || echo "N/A")
+        MIG_PENDING=$(nvidia-smi --query-gpu=mig.mode.pending --format=csv,noheader 2>/dev/null || echo "N/A")
+        if [ "$MIG_CURRENT" = "Enabled" ]; then
+            echo "MIG mode activated immediately"
+        elif [ "$MIG_PENDING" = "Enabled" ]; then
+            echo "MIG mode enabled (pending). Reboot required to activate."
+            NEEDS_REBOOT=true
+        fi
     else
         echo "MIG mode already enabled"
+    fi
+
+    # Create MIG instances now if MIG is active
+    MIG_CURRENT=$(nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader 2>/dev/null || echo "N/A")
+    if [ "$MIG_CURRENT" = "Enabled" ]; then
+        echo "Creating MIG instances: ${MIG_PROFILES}"
+        nvidia-smi mig -dci 2>/dev/null || true
+        nvidia-smi mig -dgi 2>/dev/null || true
+        if nvidia-smi mig -cgi "$MIG_PROFILES" -C; then
+            echo "MIG instances created successfully"
+            nvidia-smi mig -lgi 2>/dev/null || true
+        else
+            echo "WARNING: Failed to create MIG instances"
+        fi
     fi
 fi
 
