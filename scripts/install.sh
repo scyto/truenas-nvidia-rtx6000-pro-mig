@@ -21,14 +21,15 @@ PERSIST_PATH=""
 
 for arg in "$@"; do
     case "$arg" in
-        --mig-profiles=*) MIG_PROFILES="${arg#*=}" ;;
+        --mig-profiles=*|--mig=*) MIG_PROFILES="${arg#*=}" ;;
         --pool=*) POOL_NAME="${arg#*=}" ;;
         --persist-path=*) PERSIST_PATH="${arg#*=}" ;;
         --help)
             echo "Usage: sudo ./install.sh [OPTIONS] [path-to-nvidia.raw]"
             echo ""
             echo "Options:"
-            echo "  --mig-profiles=PROFILES  MIG profile IDs (e.g., 47,47,14,14)"
+            echo "  --mig=PROFILES           MIG profile IDs (e.g., 47,47,14,14)"
+            echo "  --mig-profiles=PROFILES  (alias for --mig)"
             echo "  --pool=NAME              ZFS pool for persistent config (e.g., fast)"
             echo "  --persist-path=PATH      Exact path for persistent config"
             echo "  --help                   Show this help"
