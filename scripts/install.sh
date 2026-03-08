@@ -494,6 +494,7 @@ except Exception:
 " 2>/dev/null)
 
             # --- Interactive MIG-to-app assignment loop ---
+            echo "DEBUG: APP_NAMES=${#APP_NAMES[@]}, PCI_SLOT='${PCI_SLOT}', tty=$([ -e /dev/tty ] && echo yes || echo no)"
             if [ "${#APP_NAMES[@]}" -gt 0 ] && [ -n "$PCI_SLOT" ] && [ -e /dev/tty ]; then
                 echo ""
                 echo "=== Assign MIG devices to TrueNAS apps ==="
