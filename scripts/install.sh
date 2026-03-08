@@ -479,98 +479,195 @@ except Exception:
                 fi
             done
 
-            # Get list of TrueNAS apps with current GPU assignments
-            APP_DATA=$(midclt call app.query 2>/dev/null | python3 -c "
+            # Get list of TrueNAS app names
+            mapfile -t APP_NAMES < <(midclt call app.query 2>/dev/null | python3 -c "
 import sys, json
 try:
     apps = json.load(sys.stdin)
     for app in apps:
         name = app.get('name', '')
-        if not name:
-            continue
-        config = app.get('config', {}) or {}
-        resources = config.get('resources', {}) or {}
-        gpus = resources.get('gpus', {}) or {}
-        gpu_sel = gpus.get('nvidia_gpu_selection', {}) or {}
-        current_uuid = ''
-        for slot, slot_cfg in gpu_sel.items():
-            if isinstance(slot_cfg, dict) and slot_cfg.get('use_gpu'):
-                current_uuid = slot_cfg.get('uuid', '')
-        print(f'{name}|{current_uuid}')
+        if name:
+            print(name)
 except Exception:
     pass
 " 2>/dev/null)
 
-            mapfile -t APP_LINES <<< "$APP_DATA"
-            APP_NAMES=()
-            APP_CURRENT_UUIDS=()
-            for line in "${APP_LINES[@]}"; do
-                [ -z "$line" ] && continue
-                APP_NAMES+=("${line%%|*}")
-                APP_CURRENT_UUIDS+=("${line##*|}")
-            done
-
-            # Show current app GPU assignments
-            echo ""
-            echo "Current app GPU assignments:"
-            has_assignments=false
-            for i in "${!APP_NAMES[@]}"; do
-                if [ -n "${APP_CURRENT_UUIDS[$i]}" ]; then
-                    echo "  ${APP_NAMES[$i]}: ${APP_CURRENT_UUIDS[$i]}"
-                    has_assignments=true
-                fi
-            done
-            [ "$has_assignments" = "false" ] && echo "  (no apps with GPU assignments)"
-
-            # Interactive assignment (only if we have apps, a PCI slot, and a tty)
+            # --- Interactive MIG-to-app assignment loop ---
             if [ "${#APP_NAMES[@]}" -gt 0 ] && [ -n "$PCI_SLOT" ] && [ -e /dev/tty ]; then
                 echo ""
-                echo "=== Assign MIG devices to apps ==="
-                echo "Available apps:"
-                for i in "${!APP_NAMES[@]}"; do
-                    echo "  [$((i+1))] ${APP_NAMES[$i]}"
-                done
+                echo "=== Assign MIG devices to TrueNAS apps ==="
+                echo "Create mappings one at a time. Enter 0 at any prompt to finish."
+                echo ""
 
-                echo ""
-                echo "Enter assignments as DEVICE_NUM=APP_NUM (e.g., 1=3), one per line."
-                echo "Press Enter on a blank line when done."
-                echo ""
+                # Track staged assignments: parallel arrays
+                STAGED_APP=()    # app name per assignment
+                STAGED_UUID=()   # MIG UUID per assignment
+                STAGED_DEV=()    # device display number per assignment
+                STAGED_DTYPE=()  # device type string per assignment
+
                 while true; do
-                    printf "Assign: "
-                    read -r assignment </dev/tty || break
-                    [ -z "$assignment" ] && break
+                    # Show MIG devices with current staged assignments
+                    echo "--- MIG Devices ---"
+                    for i in "${!MIG_UUIDS[@]}"; do
+                        pid="${PROFILE_ARRAY[$i]:-unknown}"
+                        case "$pid" in
+                            47) dtype="gfx + compute (1g.24gb)" ;;
+                            35) dtype="gfx + compute (2g.48gb)" ;;
+                            32) dtype="gfx + compute (4g.96gb)" ;;
+                            14) dtype="compute only (1g.24gb)" ;;
+                            5)  dtype="compute only (2g.48gb)" ;;
+                            0)  dtype="compute only (4g.96gb)" ;;
+                            64) dtype="compute + all media engines (2g.48gb)" ;;
+                            21) dtype="compute + all media engines (1g.24gb)" ;;
+                            65) dtype="compute + all media engines (1g.24gb)" ;;
+                            67) dtype="compute, no media (1g.24gb)" ;;
+                            66) dtype="compute, no media (2g.48gb)" ;;
+                            *)  dtype="profile $pid" ;;
+                        esac
+                        # Check if this UUID has a staged assignment
+                        assigned_to=""
+                        for j in "${!STAGED_UUID[@]}"; do
+                            if [ "${STAGED_UUID[$j]}" = "${MIG_UUIDS[$i]}" ]; then
+                                assigned_to="${STAGED_APP[$j]}"
+                            fi
+                        done
+                        if [ -n "$assigned_to" ]; then
+                            echo "  [$((i+1))] ${dtype}  -->  ${assigned_to}"
+                        else
+                            echo "  [$((i+1))] ${dtype}"
+                        fi
+                        echo "        ${MIG_UUIDS[$i]}"
+                    done
 
-                    dev_num="${assignment%%=*}"
-                    app_num="${assignment##*=}"
+                    echo ""
+                    printf "Select MIG device number (0 to finish): "
+                    read -r dev_num </dev/tty || break
+                    [ "$dev_num" = "0" ] && break
 
-                    # Validate
-                    if ! [[ "$dev_num" =~ ^[0-9]+$ ]] || ! [[ "$app_num" =~ ^[0-9]+$ ]]; then
-                        echo "  Invalid format. Use DEVICE_NUM=APP_NUM (e.g., 1=3)"
+                    if ! [[ "$dev_num" =~ ^[0-9]+$ ]]; then
+                        echo "  Invalid input. Enter a device number."
+                        echo ""
                         continue
                     fi
-
                     dev_idx=$((dev_num - 1))
-                    app_idx=$((app_num - 1))
-
                     if [ "$dev_idx" -lt 0 ] || [ "$dev_idx" -ge "${#MIG_UUIDS[@]}" ]; then
                         echo "  Invalid device number: $dev_num"
-                        continue
-                    fi
-                    if [ "$app_idx" -lt 0 ] || [ "$app_idx" -ge "${#APP_NAMES[@]}" ]; then
-                        echo "  Invalid app number: $app_num"
+                        echo ""
                         continue
                     fi
 
                     sel_uuid="${MIG_UUIDS[$dev_idx]}"
+                    sel_pid="${PROFILE_ARRAY[$dev_idx]:-unknown}"
+                    case "$sel_pid" in
+                        47) sel_dtype="gfx + compute (1g.24gb)" ;;
+                        35) sel_dtype="gfx + compute (2g.48gb)" ;;
+                        32) sel_dtype="gfx + compute (4g.96gb)" ;;
+                        14) sel_dtype="compute only (1g.24gb)" ;;
+                        5)  sel_dtype="compute only (2g.48gb)" ;;
+                        0)  sel_dtype="compute only (4g.96gb)" ;;
+                        64) sel_dtype="compute + all media engines (2g.48gb)" ;;
+                        21) sel_dtype="compute + all media engines (1g.24gb)" ;;
+                        65) sel_dtype="compute + all media engines (1g.24gb)" ;;
+                        67) sel_dtype="compute, no media (1g.24gb)" ;;
+                        66) sel_dtype="compute, no media (2g.48gb)" ;;
+                        *)  sel_dtype="profile $sel_pid" ;;
+                    esac
+
+                    # Show apps list with any existing staged assignments
+                    echo ""
+                    echo "--- Apps ---"
+                    for i in "${!APP_NAMES[@]}"; do
+                        # Check if this app already has a staged assignment
+                        app_assigned=""
+                        for j in "${!STAGED_APP[@]}"; do
+                            if [ "${STAGED_APP[$j]}" = "${APP_NAMES[$i]}" ]; then
+                                app_assigned="${STAGED_DTYPE[$j]}"
+                            fi
+                        done
+                        if [ -n "$app_assigned" ]; then
+                            echo "  [$((i+1))] ${APP_NAMES[$i]}  <--  ${app_assigned}"
+                        else
+                            echo "  [$((i+1))] ${APP_NAMES[$i]}"
+                        fi
+                    done
+
+                    echo ""
+                    printf "Assign device %d (%s) to app number (0 to cancel): " "$dev_num" "$sel_dtype"
+                    read -r app_num </dev/tty || break
+                    [ "$app_num" = "0" ] && echo "" && continue
+
+                    if ! [[ "$app_num" =~ ^[0-9]+$ ]]; then
+                        echo "  Invalid input. Enter an app number."
+                        echo ""
+                        continue
+                    fi
+                    app_idx=$((app_num - 1))
+                    if [ "$app_idx" -lt 0 ] || [ "$app_idx" -ge "${#APP_NAMES[@]}" ]; then
+                        echo "  Invalid app number: $app_num"
+                        echo ""
+                        continue
+                    fi
+
                     sel_app="${APP_NAMES[$app_idx]}"
 
-                    echo "  Assigning ${sel_uuid} to ${sel_app}..."
-                    if midclt call app.update "$sel_app" "{\"values\":{\"resources\":{\"gpus\":{\"use_all_gpus\":false,\"nvidia_gpu_selection\":{\"$PCI_SLOT\":{\"use_gpu\":true,\"uuid\":\"$sel_uuid\"}}}}}}" 2>/dev/null; then
-                        echo "  Assigned MIG device $dev_num to ${sel_app}"
-                    else
-                        echo "  WARNING: Failed to assign MIG device to ${sel_app}"
-                    fi
+                    # Remove any previous staging for this app (override)
+                    NEW_STAGED_APP=()
+                    NEW_STAGED_UUID=()
+                    NEW_STAGED_DEV=()
+                    NEW_STAGED_DTYPE=()
+                    for j in "${!STAGED_APP[@]}"; do
+                        if [ "${STAGED_APP[$j]}" != "$sel_app" ]; then
+                            NEW_STAGED_APP+=("${STAGED_APP[$j]}")
+                            NEW_STAGED_UUID+=("${STAGED_UUID[$j]}")
+                            NEW_STAGED_DEV+=("${STAGED_DEV[$j]}")
+                            NEW_STAGED_DTYPE+=("${STAGED_DTYPE[$j]}")
+                        fi
+                    done
+                    STAGED_APP=("${NEW_STAGED_APP[@]+"${NEW_STAGED_APP[@]}"}")
+                    STAGED_UUID=("${NEW_STAGED_UUID[@]+"${NEW_STAGED_UUID[@]}"}")
+                    STAGED_DEV=("${NEW_STAGED_DEV[@]+"${NEW_STAGED_DEV[@]}"}")
+                    STAGED_DTYPE=("${NEW_STAGED_DTYPE[@]+"${NEW_STAGED_DTYPE[@]}"}")
+
+                    # Stage the assignment
+                    STAGED_APP+=("$sel_app")
+                    STAGED_UUID+=("$sel_uuid")
+                    STAGED_DEV+=("$dev_num")
+                    STAGED_DTYPE+=("$sel_dtype")
+
+                    echo "  Staged: device $dev_num ($sel_dtype) --> $sel_app"
+                    echo ""
                 done
+
+                # --- Confirmation and apply ---
+                if [ "${#STAGED_APP[@]}" -gt 0 ]; then
+                    echo ""
+                    echo "=== Assignment Summary ==="
+                    for i in "${!STAGED_APP[@]}"; do
+                        echo "  Device ${STAGED_DEV[$i]} (${STAGED_DTYPE[$i]})  -->  ${STAGED_APP[$i]}"
+                        echo "    ${STAGED_UUID[$i]}"
+                    done
+                    echo ""
+                    printf "Apply these assignments? [Y/n] "
+                    read -r confirm </dev/tty || confirm="y"
+                    case "$confirm" in
+                        [nN]*)
+                            echo "Assignments discarded."
+                            ;;
+                        *)
+                            for i in "${!STAGED_APP[@]}"; do
+                                echo "  Assigning device ${STAGED_DEV[$i]} to ${STAGED_APP[$i]}..."
+                                if midclt call app.update "${STAGED_APP[$i]}" "{\"values\":{\"resources\":{\"gpus\":{\"use_all_gpus\":false,\"nvidia_gpu_selection\":{\"$PCI_SLOT\":{\"use_gpu\":true,\"uuid\":\"${STAGED_UUID[$i]}\"}}}}}}" 2>/dev/null; then
+                                    echo "    OK"
+                                else
+                                    echo "    WARNING: Failed to update ${STAGED_APP[$i]}"
+                                fi
+                            done
+                            echo "All assignments applied."
+                            ;;
+                    esac
+                else
+                    echo "No assignments made."
+                fi
             fi
         else
             echo "WARNING: Failed to create MIG instances"
