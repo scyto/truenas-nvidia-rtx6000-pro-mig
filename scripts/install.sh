@@ -531,11 +531,15 @@ except Exception:
                             66) dtype="compute, no media (2g.48gb)" ;;
                             *)  dtype="profile $pid" ;;
                         esac
-                        # Check if this UUID has a staged assignment
+                        # Collect all apps staged for this UUID
                         assigned_to=""
                         for j in "${!STAGED_UUID[@]}"; do
                             if [ "${STAGED_UUID[$j]}" = "${MIG_UUIDS[$i]}" ]; then
-                                assigned_to="${STAGED_APP[$j]}"
+                                if [ -n "$assigned_to" ]; then
+                                    assigned_to="${assigned_to}, ${STAGED_APP[$j]}"
+                                else
+                                    assigned_to="${STAGED_APP[$j]}"
+                                fi
                             fi
                         done
                         if [ -n "$assigned_to" ]; then
@@ -661,15 +665,31 @@ except Exception:
                             echo "Assignments discarded."
                             ;;
                         *)
+                            ASSIGNED_APPS=()
                             for i in "${!STAGED_APP[@]}"; do
                                 echo "  Assigning device ${STAGED_DEV[$i]} to ${STAGED_APP[$i]}..."
                                 if midclt call app.update "${STAGED_APP[$i]}" "{\"values\":{\"resources\":{\"gpus\":{\"use_all_gpus\":false,\"nvidia_gpu_selection\":{\"$PCI_SLOT\":{\"use_gpu\":true,\"uuid\":\"${STAGED_UUID[$i]}\"}}}}}}" 2>/dev/null; then
                                     echo "    OK"
+                                    ASSIGNED_APPS+=("${STAGED_APP[$i]}")
                                 else
                                     echo "    WARNING: Failed to update ${STAGED_APP[$i]}"
                                 fi
                             done
                             echo "All assignments applied."
+
+                            # Restart assigned apps so they pick up the new GPU config
+                            if [ "${#ASSIGNED_APPS[@]}" -gt 0 ]; then
+                                echo ""
+                                echo "Restarting assigned apps..."
+                                for app_name in "${ASSIGNED_APPS[@]}"; do
+                                    printf "  Restarting %s..." "$app_name"
+                                    if midclt call app.redeploy "$app_name" 2>/dev/null; then
+                                        echo " OK"
+                                    else
+                                        echo " WARNING: Failed to restart $app_name"
+                                    fi
+                                done
+                            fi
                             ;;
                     esac
                 else
