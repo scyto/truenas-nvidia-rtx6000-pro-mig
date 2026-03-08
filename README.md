@@ -76,13 +76,33 @@ Reference: [NVIDIA Getting Started with MIG](https://docs.nvidia.com/datacenter/
 
 ### Prerequisites
 
-- **Workstation Edition only**: You must switch to **compute display mode** before MIG can be enabled. This disables physical display output on single-card systems.
-  ```bash
-  # Use displaymodeselector v1.72.0+
-  sudo displaymodeselector --gpumode compute
-  ```
+#### 1. Obtain displaymodeselector
 
-- Verify vBIOS meets minimum requirements for your card
+The `displaymodeselector` tool is required to switch the GPU to compute display mode before MIG can be enabled. It is not included in the standard NVIDIA driver package.
+
+1. Go to [developer.nvidia.com/displaymodeselector](https://developer.nvidia.com/displaymodeselector)
+2. Log in with your NVIDIA Developer account (create one for free if needed)
+3. Click **Join now** to request access — approval is typically immediate
+4. Download the Linux package (`.tar.gz`)
+5. Extract the binary: `tar xzf DisplayModeSelector-*.tar.gz`
+6. SCP it to your TrueNAS server: `scp displaymodeselector truenas_admin@<your-server>:~/`
+
+The install script will automatically detect it in your home directory and inject it into the sysext.
+
+> **Warning**: NVIDIA notes that setting a non-default display mode on an unqualified system could cause issues. The RTX PRO 6000 Blackwell Workstation Edition is qualified for compute mode.
+
+#### 2. Switch to compute display mode
+
+This disables physical display output on single-card systems. Ensure SSH access is available before proceeding.
+
+```bash
+# Use displaymodeselector v1.72.0+
+sudo displaymodeselector --gpumode compute
+# Reboot required after this step
+sudo reboot
+```
+
+#### 3. Verify vBIOS meets minimum requirements for your card
 
 ### Enable MIG
 
