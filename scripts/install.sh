@@ -183,11 +183,10 @@ echo ""
 
 # Verify
 if command -v nvidia-smi &>/dev/null; then
-    echo "Driver version:"
-    nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null || echo "(nvidia-smi not yet available — may need service restart)"
-    echo ""
-    echo "MIG capability:"
-    nvidia-smi --query-gpu=mig.mode.current,mig.mode.pending --format=csv 2>/dev/null || true
+    DRIVER_VER=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null || echo "unknown")
+    PERSIST=$(nvidia-smi --query-gpu=persistence_mode --format=csv,noheader 2>/dev/null || echo "unknown")
+    MIG_CUR=$(nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader 2>/dev/null || echo "unknown")
+    echo "Driver: ${DRIVER_VER}  |  Persistence: ${PERSIST}  |  MIG: ${MIG_CUR}"
 else
     echo "nvidia-smi not found — you may need to restart Docker services"
 fi
