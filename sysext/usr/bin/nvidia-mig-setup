@@ -116,9 +116,14 @@ PCI_SLOT=$(midclt call app.gpu_choices 2>/dev/null \
 import sys, json
 try:
     choices = json.load(sys.stdin)
-    # Find PCI slot that has NVIDIA in description
-    for slot, desc in choices.items():
-        if 'nvidia' in desc.lower() or 'NVIDIA' in desc:
+    for slot, info in choices.items():
+        if isinstance(info, dict):
+            vendor = (info.get('vendor') or '').upper()
+            desc = (info.get('description') or '').upper()
+            if 'NVIDIA' in vendor or 'NVIDIA' in desc:
+                print(slot, end='')
+                break
+        elif isinstance(info, str) and 'NVIDIA' in info.upper():
             print(slot, end='')
             break
 except Exception:

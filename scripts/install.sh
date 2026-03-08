@@ -442,8 +442,14 @@ MIGEOF
 import sys, json
 try:
     choices = json.load(sys.stdin)
-    for slot, desc in choices.items():
-        if 'nvidia' in desc.lower() or 'NVIDIA' in desc:
+    for slot, info in choices.items():
+        if isinstance(info, dict):
+            vendor = (info.get('vendor') or '').upper()
+            desc = (info.get('description') or '').upper()
+            if 'NVIDIA' in vendor or 'NVIDIA' in desc:
+                print(slot, end='')
+                break
+        elif isinstance(info, str) and 'NVIDIA' in info.upper():
             print(slot, end='')
             break
 except Exception:
@@ -494,7 +500,6 @@ except Exception:
 " 2>/dev/null)
 
             # --- Interactive MIG-to-app assignment loop ---
-            echo "DEBUG: APP_NAMES=${#APP_NAMES[@]}, PCI_SLOT='${PCI_SLOT}', tty=$([ -e /dev/tty ] && echo yes || echo no)"
             if [ "${#APP_NAMES[@]}" -gt 0 ] && [ -n "$PCI_SLOT" ] && [ -e /dev/tty ]; then
                 echo ""
                 echo "=== Assign MIG devices to TrueNAS apps ==="
