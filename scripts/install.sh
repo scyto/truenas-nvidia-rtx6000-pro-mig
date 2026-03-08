@@ -161,7 +161,16 @@ zfs set readonly=on "${USR_DATASET}"
 # Re-enable NVIDIA support
 echo "Merging sysext and re-enabling NVIDIA..."
 systemd-sysext merge
+systemctl daemon-reload
 midclt call docker.update '{"nvidia": true}'
+
+# Start nvidia-persistenced (provides persistence mode for GPU state)
+if systemctl list-unit-files nvidia-persistenced.service &>/dev/null; then
+    echo "Starting nvidia-persistenced..."
+    systemctl start nvidia-persistenced.service 2>/dev/null \
+        && echo "nvidia-persistenced started" \
+        || echo "WARNING: Could not start nvidia-persistenced"
+fi
 
 echo ""
 echo "=== Installation complete ==="
@@ -210,15 +219,15 @@ mkdir -p "$PERSIST_DIR"
 echo "Backing up nvidia.raw to persistent storage..."
 cp /tmp/nvidia.raw "${PERSIST_DIR}/nvidia.raw"
 
-# --- Write POSTINIT script to persistent storage ---
+# --- Write PREINIT script to persistent storage ---
 # NOTE: This is an inline copy of scripts/nvidia-postinit.sh.
 # Keep both copies in sync when making changes.
-echo "Writing POSTINIT script..."
+echo "Writing PREINIT script..."
 cat > "${PERSIST_DIR}/nvidia-postinit.sh" <<'POSTINIT_EOF'
 #!/usr/bin/env bash
-# TrueNAS POSTINIT script: reinstalls nvidia.raw sysext after OS updates.
+# TrueNAS PREINIT script: reinstalls nvidia.raw sysext after OS updates.
 # Stored on persistent pool; registered via midclt during install.
-# Idempotent — safe to run on every boot.
+# Runs before services start, ensuring GPU drivers are available for Docker.
 
 set -uo pipefail
 
@@ -284,6 +293,12 @@ systemd-sysext merge
 log "Reloading systemd..."
 systemctl daemon-reload
 
+# --- Start nvidia-persistenced ---
+if systemctl list-unit-files nvidia-persistenced.service &>/dev/null; then
+    log "Starting nvidia-persistenced..."
+    systemctl start nvidia-persistenced.service 2>/dev/null || log "WARNING: nvidia-persistenced failed"
+fi
+
 # --- Start MIG setup service (recreates instances + remaps UUIDs) ---
 if systemctl list-unit-files nvidia-mig-setup.service &>/dev/null; then
     log "Starting nvidia-mig-setup.service..."
@@ -300,9 +315,9 @@ exit 0
 POSTINIT_EOF
 chmod +x "${PERSIST_DIR}/nvidia-postinit.sh"
 
-# --- Register POSTINIT script via midclt ---
-POSTINIT_SCRIPT="${PERSIST_DIR}/nvidia-postinit.sh"
-echo "Registering POSTINIT script..."
+# --- Register PREINIT script via midclt ---
+PREINIT_SCRIPT="${PERSIST_DIR}/nvidia-postinit.sh"
+echo "Registering PREINIT script..."
 
 EXISTING_ID=$(midclt call initshutdownscript.query 2>/dev/null \
     | python3 -c "
@@ -319,13 +334,13 @@ except Exception:
 " 2>/dev/null)
 
 if [ -n "$EXISTING_ID" ]; then
-    echo "POSTINIT script already registered (id: ${EXISTING_ID}), updating..."
-    midclt call initshutdownscript.update "$EXISTING_ID" "{\"type\": \"COMMAND\", \"command\": \"${POSTINIT_SCRIPT}\", \"when\": \"POSTINIT\", \"enabled\": true, \"comment\": \"Reinstall custom NVIDIA sysext after TrueNAS updates\"}" 2>/dev/null \
-        || echo "WARNING: Failed to update POSTINIT script"
+    echo "PREINIT script already registered (id: ${EXISTING_ID}), updating..."
+    midclt call initshutdownscript.update "$EXISTING_ID" "{\"type\": \"COMMAND\", \"command\": \"${PREINIT_SCRIPT}\", \"when\": \"PREINIT\", \"enabled\": true, \"timeout\": 30, \"comment\": \"Reinstall custom NVIDIA sysext before services start\"}" 2>/dev/null \
+        || echo "WARNING: Failed to update PREINIT script"
 else
-    midclt call initshutdownscript.create "{\"type\": \"COMMAND\", \"command\": \"${POSTINIT_SCRIPT}\", \"when\": \"POSTINIT\", \"enabled\": true, \"comment\": \"Reinstall custom NVIDIA sysext after TrueNAS updates\"}" 2>/dev/null \
-        || echo "WARNING: Failed to register POSTINIT script"
-    echo "POSTINIT script registered"
+    midclt call initshutdownscript.create "{\"type\": \"COMMAND\", \"command\": \"${PREINIT_SCRIPT}\", \"when\": \"PREINIT\", \"enabled\": true, \"timeout\": 30, \"comment\": \"Reinstall custom NVIDIA sysext before services start\"}" 2>/dev/null \
+        || echo "WARNING: Failed to register PREINIT script"
+    echo "PREINIT script registered"
 fi
 
 # --- MIG configuration ---
@@ -340,11 +355,22 @@ MIGEOF
     echo "MIG config written to ${PERSIST_DIR}/mig.conf"
     echo "  Profiles: ${MIG_PROFILES}"
 
-    # Enable the MIG setup service
-    systemctl daemon-reload 2>/dev/null || true
+    # Enable the MIG setup service (daemon-reload already done after sysext merge)
     systemctl enable nvidia-mig-setup.service 2>/dev/null \
         && echo "nvidia-mig-setup.service enabled" \
-        || echo "WARNING: Could not enable nvidia-mig-setup.service (may not be in sysext yet)"
+        || echo "WARNING: Could not enable nvidia-mig-setup.service"
+
+    # Enable MIG mode on the GPU (requires reboot to take effect)
+    MIG_CURRENT=$(nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader 2>/dev/null || echo "N/A")
+    if [ "$MIG_CURRENT" != "Enabled" ]; then
+        echo "Enabling MIG mode (pending reboot)..."
+        nvidia-smi -mig 1 2>/dev/null \
+            && echo "MIG mode enabled (pending). Reboot required to activate." \
+            || echo "WARNING: Could not enable MIG mode"
+        NEEDS_REBOOT=true
+    else
+        echo "MIG mode already enabled"
+    fi
 fi
 
 echo ""
@@ -352,8 +378,15 @@ echo "=== Persistence setup complete ==="
 echo ""
 echo "Persistent config: ${PERSIST_DIR}/"
 echo "  nvidia.raw      — backup for post-update reinstall"
-echo "  nvidia-postinit.sh — runs on every boot (registered as POSTINIT)"
+echo "  nvidia-postinit.sh — runs on every boot (registered as PREINIT)"
 [ -n "$MIG_PROFILES" ] && echo "  mig.conf         — MIG profiles: ${MIG_PROFILES}"
 echo ""
-echo "After reboot, MIG instances will be automatically recreated"
-echo "and app GPU UUIDs will be remapped."
+if [ "${NEEDS_REBOOT:-false}" = "true" ]; then
+    echo "*** REBOOT REQUIRED ***"
+    echo "MIG mode has been enabled but requires a reboot to activate."
+    echo "After reboot, MIG instances will be automatically created"
+    echo "and app GPU UUIDs will be remapped."
+else
+    echo "After reboot, MIG instances will be automatically recreated"
+    echo "and app GPU UUIDs will be remapped."
+fi

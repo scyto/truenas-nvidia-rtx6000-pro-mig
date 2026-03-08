@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# TrueNAS POSTINIT script: reinstalls nvidia.raw sysext after OS updates.
+# TrueNAS PREINIT script: reinstalls nvidia.raw sysext after OS updates.
 # Stored on persistent pool; registered via midclt during install.
-# Idempotent — safe to run on every boot.
+# Runs before services start, ensuring GPU drivers are available for Docker.
 #
 # NOTE: This script is also embedded inline in install.sh (heredoc).
 # Keep both copies in sync when making changes.
@@ -69,6 +69,12 @@ systemd-sysext merge
 
 log "Reloading systemd..."
 systemctl daemon-reload
+
+# --- Start nvidia-persistenced ---
+if systemctl list-unit-files nvidia-persistenced.service &>/dev/null; then
+    log "Starting nvidia-persistenced..."
+    systemctl start nvidia-persistenced.service 2>/dev/null || log "WARNING: nvidia-persistenced failed"
+fi
 
 # --- Start MIG setup service (recreates instances + remaps UUIDs) ---
 if systemctl list-unit-files nvidia-mig-setup.service &>/dev/null; then

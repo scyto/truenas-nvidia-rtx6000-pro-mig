@@ -10,7 +10,7 @@ MIG instances on the RTX PRO 6000 Blackwell are volatile — they don't survive 
 | --- | --- | --- |
 | `/usr/` (sysext, systemd units) | Yes | **No** (recreated) |
 | `/mnt/<pool>/` (ZFS datasets) | Yes | Yes |
-| TrueNAS DB (POSTINIT scripts) | Yes | Yes |
+| TrueNAS DB (PREINIT scripts) | Yes | Yes |
 | GPU firmware (MIG mode, display mode) | Yes | Yes |
 | MIG instances | **No** | **No** |
 
@@ -34,9 +34,9 @@ After creating instances, the service automatically remaps app GPU UUIDs:
 3. Updates any app with an existing MIG UUID assignment to the new UUID
 4. Never exits non-zero — boot is never blocked
 
-### 2. Post-update reinstall via POSTINIT
+### 2. Pre-service reinstall via PREINIT
 
-A TrueNAS POSTINIT script (`nvidia-postinit.sh`) runs on every boot:
+A TrueNAS PREINIT script (`nvidia-postinit.sh`) runs on every boot before services start:
 
 1. Compares checksums of the backup `nvidia.raw` vs the installed one
 2. If identical (normal boot): exits immediately
@@ -52,7 +52,7 @@ A TrueNAS POSTINIT script (`nvidia-postinit.sh`) runs on every boot:
 ```
 /mnt/<pool>/.config/nvidia-gpu/
     nvidia.raw              # Backup copy (survives TrueNAS updates)
-    nvidia-postinit.sh      # POSTINIT script (registered in TrueNAS DB)
+    nvidia-postinit.sh      # PREINIT script (registered in TrueNAS DB)
     mig.conf                # MIG profile configuration
 ```
 
@@ -89,17 +89,17 @@ At runtime, both `nvidia-mig-setup` and `nvidia-postinit.sh` use glob patterns (
 
 ### After TrueNAS update
 
-1. System boots with stock `nvidia.raw` — Docker starts without custom driver
-2. POSTINIT script runs, detects checksum mismatch
+1. System boots with stock `nvidia.raw`
+2. PREINIT script runs before services, detects checksum mismatch
 3. Reinstalls custom `nvidia.raw`, merges sysext
-4. Starts `nvidia-mig-setup.service` — recreates MIG instances, remaps UUIDs
-5. Restarts Docker with NVIDIA support
+4. Starts `nvidia-persistenced` and `nvidia-mig-setup.service`
+5. Services start normally — Docker gets NVIDIA with correct MIG devices
 
 ## Rollback
 
 Running `scripts/restore.sh` reverses everything:
 
 - Restores original `nvidia.raw` from `.bak`
-- Deregisters the POSTINIT script from TrueNAS
+- Deregisters the PREINIT script from TrueNAS
 - Removes persistent config from `/mnt/<pool>/.config/nvidia-gpu/`
 - Disables `nvidia-mig-setup.service`

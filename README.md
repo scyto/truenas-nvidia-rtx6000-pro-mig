@@ -225,16 +225,16 @@ EOF
 
 ### Step 7: Survive TrueNAS updates
 
-TrueNAS updates recreate `/usr` from scratch, wiping the custom nvidia.raw. The install script registers a POSTINIT script that automatically reinstalls it:
+TrueNAS updates recreate `/usr` from scratch, wiping the custom nvidia.raw. The install script registers a PREINIT script that automatically reinstalls it:
 
 - Stores a backup of `nvidia.raw` on your persistent pool
-- Registers a TrueNAS POSTINIT script (persists in DB across updates)
+- Registers a TrueNAS PREINIT script (runs before services start, persists in DB across updates)
 - On each boot, compares checksums — only reinstalls if nvidia.raw has changed or is missing
-- After reinstalling: merges sysext, recreates MIG instances, remaps UUIDs, restarts Docker with NVIDIA
+- After reinstalling: merges sysext, starts nvidia-persistenced, recreates MIG instances, remaps UUIDs
 
 This is set up automatically by `install.sh`. No manual steps required.
 
-To check the POSTINIT registration:
+To check the PREINIT registration:
 
 ```bash
 midclt call initshutdownscript.query | python3 -m json.tool
@@ -285,7 +285,7 @@ sudo ./restore.sh
 ```
 
 This restores the backup created during installation. It also:
-- Deregisters the POSTINIT script from TrueNAS
+- Deregisters the PREINIT script from TrueNAS
 - Removes persistent config from `/mnt/<pool>/.config/nvidia-gpu/`
 - Disables the `nvidia-mig-setup.service`
 

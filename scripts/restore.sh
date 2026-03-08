@@ -52,8 +52,8 @@ echo "=== Cleaning up persistence ==="
 # Disable MIG setup service
 systemctl disable nvidia-mig-setup.service 2>/dev/null || true
 
-# Deregister POSTINIT script
-POSTINIT_ID=$(midclt call initshutdownscript.query 2>/dev/null \
+# Deregister PREINIT script
+PREINIT_ID=$(midclt call initshutdownscript.query 2>/dev/null \
     | python3 -c "
 import sys, json
 try:
@@ -66,12 +66,12 @@ except Exception:
     pass
 " 2>/dev/null)
 
-if [ -n "$POSTINIT_ID" ]; then
-    midclt call initshutdownscript.delete "$POSTINIT_ID" 2>/dev/null \
-        && echo "POSTINIT script deregistered (id: ${POSTINIT_ID})" \
-        || echo "WARNING: Failed to deregister POSTINIT script"
+if [ -n "$PREINIT_ID" ]; then
+    midclt call initshutdownscript.delete "$PREINIT_ID" 2>/dev/null \
+        && echo "PREINIT script deregistered (id: ${PREINIT_ID})" \
+        || echo "WARNING: Failed to deregister PREINIT script"
 else
-    echo "No POSTINIT script found to deregister"
+    echo "No PREINIT script found to deregister"
 fi
 
 # Remove persistent config
