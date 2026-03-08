@@ -416,8 +416,14 @@ MIGEOF
 
             # Build MIG device list with types
             # Use MIG_PROFILES order (matches creation order = UUID order)
+            # Brief pause for nvidia-smi to reflect newly created instances
+            sleep 2
             mapfile -t MIG_UUIDS < <(nvidia-smi -L 2>/dev/null | grep 'MIG' | sed -n 's/.*UUID: \(MIG-[^)]*\)).*/\1/p')
             mapfile -t MIG_NAMES < <(nvidia-smi -L 2>/dev/null | grep 'MIG' | sed 's/.*MIG /MIG /' | sed 's/[[:space:]]*Device.*//')
+            if [ "${#MIG_UUIDS[@]}" -eq 0 ]; then
+                echo "WARNING: nvidia-smi -L returned no MIG UUIDs. Raw output:"
+                nvidia-smi -L 2>&1 || true
+            fi
             IFS=',' read -ra PROFILE_ARRAY <<< "$MIG_PROFILES"
 
             echo "=== MIG Devices ==="
