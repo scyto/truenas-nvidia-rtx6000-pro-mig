@@ -76,7 +76,7 @@ if systemctl list-unit-files nvidia-persistenced.service &>/dev/null; then
     systemctl start nvidia-persistenced.service 2>/dev/null || log "WARNING: nvidia-persistenced failed"
 else
     log "Enabling persistence mode via nvidia-smi..."
-    nvidia-smi -pm 1 2>/dev/null || log "WARNING: Could not enable persistence mode"
+    /usr/bin/nvidia-smi -pm 1 2>/dev/null || log "WARNING: Could not enable persistence mode"
 fi
 
 # --- Start MIG setup service (recreates instances + remaps UUIDs) ---

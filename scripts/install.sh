@@ -184,7 +184,7 @@ if systemctl list-unit-files nvidia-persistenced.service &>/dev/null; then
         || echo "WARNING: Could not start nvidia-persistenced"
 else
     echo "Enabling persistence mode via nvidia-smi..."
-    nvidia-smi -pm 1 2>/dev/null \
+    /usr/bin/nvidia-smi -pm 1 2>/dev/null \
         && echo "Persistence mode enabled" \
         || echo "WARNING: Could not enable persistence mode"
 fi
@@ -194,10 +194,10 @@ echo "=== Installation complete ==="
 echo ""
 
 # Verify
-if command -v nvidia-smi &>/dev/null; then
-    DRIVER_VER=$(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null || echo "unknown")
-    PERSIST=$(nvidia-smi --query-gpu=persistence_mode --format=csv,noheader 2>/dev/null || echo "unknown")
-    MIG_CUR=$(nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader 2>/dev/null || echo "unknown")
+if [ -x /usr/bin/nvidia-smi ]; then
+    DRIVER_VER=$(/usr/bin/nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null || echo "unknown")
+    PERSIST=$(/usr/bin/nvidia-smi --query-gpu=persistence_mode --format=csv,noheader 2>/dev/null || echo "unknown")
+    MIG_CUR=$(/usr/bin/nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader 2>/dev/null || echo "unknown")
     echo "Driver: ${DRIVER_VER}  |  Persistence: ${PERSIST}  |  MIG: ${MIG_CUR}"
 else
     echo "nvidia-smi not found — you may need to restart Docker services"
@@ -320,7 +320,7 @@ if systemctl list-unit-files nvidia-persistenced.service &>/dev/null; then
     systemctl start nvidia-persistenced.service 2>/dev/null || log "WARNING: nvidia-persistenced failed"
 else
     log "Enabling persistence mode via nvidia-smi..."
-    nvidia-smi -pm 1 2>/dev/null || log "WARNING: Could not enable persistence mode"
+    /usr/bin/nvidia-smi -pm 1 2>/dev/null || log "WARNING: Could not enable persistence mode"
 fi
 
 # --- Start MIG setup service (recreates instances + remaps UUIDs) ---
@@ -385,15 +385,15 @@ MIGEOF
         || echo "WARNING: Could not enable nvidia-mig-setup.service"
 
     # Enable MIG mode on the GPU
-    MIG_CURRENT=$(nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader 2>/dev/null || echo "N/A")
+    MIG_CURRENT=$(/usr/bin/nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader 2>/dev/null || echo "N/A")
     if [ "$MIG_CURRENT" != "Enabled" ]; then
         echo "Enabling MIG mode..."
-        nvidia-smi -mig 1 2>/dev/null \
+        /usr/bin/nvidia-smi -mig 1 2>/dev/null \
             || { echo "WARNING: Could not enable MIG mode"; }
 
         # Check if MIG activated immediately or needs reboot
-        MIG_CURRENT=$(nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader 2>/dev/null || echo "N/A")
-        MIG_PENDING=$(nvidia-smi --query-gpu=mig.mode.pending --format=csv,noheader 2>/dev/null || echo "N/A")
+        MIG_CURRENT=$(/usr/bin/nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader 2>/dev/null || echo "N/A")
+        MIG_PENDING=$(/usr/bin/nvidia-smi --query-gpu=mig.mode.pending --format=csv,noheader 2>/dev/null || echo "N/A")
         if [ "$MIG_CURRENT" = "Enabled" ]; then
             echo "MIG mode activated immediately"
         elif [ "$MIG_PENDING" = "Enabled" ]; then
@@ -405,24 +405,23 @@ MIGEOF
     fi
 
     # Create MIG instances now if MIG is active
-    MIG_CURRENT=$(nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader 2>/dev/null || echo "N/A")
+    MIG_CURRENT=$(/usr/bin/nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader 2>/dev/null || echo "N/A")
     if [ "$MIG_CURRENT" = "Enabled" ]; then
         echo "Creating MIG instances: ${MIG_PROFILES}"
-        nvidia-smi mig -dci 2>/dev/null || true
-        nvidia-smi mig -dgi 2>/dev/null || true
-        if nvidia-smi mig -cgi "$MIG_PROFILES" -C; then
+        /usr/bin/nvidia-smi mig -dci 2>/dev/null || true
+        /usr/bin/nvidia-smi mig -dgi 2>/dev/null || true
+        if /usr/bin/nvidia-smi mig -cgi "$MIG_PROFILES" -C; then
             echo "MIG instances created successfully"
             echo ""
 
             # Build MIG device list with types
             # Use MIG_PROFILES order (matches creation order = UUID order)
-            # Brief pause for nvidia-smi to reflect newly created instances
-            sleep 2
-            mapfile -t MIG_UUIDS < <(nvidia-smi -L 2>/dev/null | grep 'MIG' | sed -n 's/.*UUID: \(MIG-[^)]*\)).*/\1/p')
-            mapfile -t MIG_NAMES < <(nvidia-smi -L 2>/dev/null | grep 'MIG' | sed 's/.*MIG /MIG /' | sed 's/[[:space:]]*Device.*//')
+            # nvidia-smi is at /usr/bin/nvidia-smi (sysext), use full path for subshells
+            mapfile -t MIG_UUIDS < <(/usr/bin/nvidia-smi -L 2>/dev/null | grep 'MIG' | sed -n 's/.*UUID: \(MIG-[^)]*\)).*/\1/p')
+            mapfile -t MIG_NAMES < <(/usr/bin/nvidia-smi -L 2>/dev/null | grep 'MIG' | sed 's/.*MIG /MIG /' | sed 's/[[:space:]]*Device.*//')
             if [ "${#MIG_UUIDS[@]}" -eq 0 ]; then
                 echo "WARNING: nvidia-smi -L returned no MIG UUIDs. Raw output:"
-                nvidia-smi -L 2>&1 || true
+                /usr/bin/nvidia-smi -L 2>&1 || true
             fi
             IFS=',' read -ra PROFILE_ARRAY <<< "$MIG_PROFILES"
 

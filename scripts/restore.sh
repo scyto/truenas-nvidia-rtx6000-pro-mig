@@ -33,7 +33,7 @@ midclt call docker.update '{"nvidia": false}'
 
 echo "Waiting for GPU processes to stop..."
 for attempt in $(seq 1 24); do
-    GPU_PROCS=$(nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | wc -l)
+    GPU_PROCS=$(/usr/bin/nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | wc -l)
     if [ "${GPU_PROCS:-0}" -eq 0 ]; then
         echo "GPU released (no processes running)"
         break
@@ -52,14 +52,14 @@ echo ""
 echo "=== Cleaning up MIG ==="
 
 echo "Destroying MIG instances..."
-nvidia-smi mig -dci 2>/dev/null || true
-nvidia-smi mig -dgi 2>/dev/null || true
+/usr/bin/nvidia-smi mig -dci 2>/dev/null || true
+/usr/bin/nvidia-smi mig -dgi 2>/dev/null || true
 
-MIG_CUR=$(nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader 2>/dev/null || echo "N/A")
+MIG_CUR=$(/usr/bin/nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader 2>/dev/null || echo "N/A")
 if [ "$MIG_CUR" = "Enabled" ]; then
     echo "Disabling MIG mode..."
-    nvidia-smi -mig 0 2>/dev/null || true
-    MIG_CUR_AFTER=$(nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader 2>/dev/null || echo "N/A")
+    /usr/bin/nvidia-smi -mig 0 2>/dev/null || true
+    MIG_CUR_AFTER=$(/usr/bin/nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader 2>/dev/null || echo "N/A")
     if [ "$MIG_CUR_AFTER" = "Enabled" ]; then
         echo "MIG mode disabled (pending). Will take effect after reboot."
     else
@@ -94,8 +94,8 @@ fi
 midclt call docker.update '{"nvidia": true}'
 
 echo ""
-if command -v nvidia-smi &>/dev/null; then
-    echo "Driver version: $(nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null || echo 'unknown')"
+if command -v /usr/bin/nvidia-smi &>/dev/null; then
+    echo "Driver version: $(/usr/bin/nvidia-smi --query-gpu=driver_version --format=csv,noheader 2>/dev/null || echo 'unknown')"
 fi
 
 # --- Step 4: Clean up persistence ---
