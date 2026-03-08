@@ -9,7 +9,7 @@
 
 set -euo pipefail
 
-REPO="scyto/truenas-nvidia-blackwell"
+REPO="scyto/truenas-nvidia-rtx6000-pro-mig"
 SYSEXT_DIR="/usr/share/truenas/sysext-extensions"
 NVIDIA_RAW="${SYSEXT_DIR}/nvidia.raw"
 

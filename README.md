@@ -21,7 +21,7 @@ That repo removes `--kernel-module-type=open` to support **legacy GPUs** (Maxwel
 ## Quick Install
 
 ```bash
-curl -fsSL https://github.com/scyto/truenas-nvidia-blackwell/releases/latest/download/install.sh | sudo bash
+curl -fsSL https://github.com/scyto/truenas-nvidia-rtx6000-pro-mig/releases/latest/download/install.sh | sudo bash
 ```
 
 The script automatically detects your TrueNAS version and downloads the matching release.
@@ -29,7 +29,7 @@ The script automatically detects your TrueNAS version and downloads the matching
 To also set up MIG persistence (auto-recreates instances after reboot and survives TrueNAS updates):
 
 ```bash
-curl -fsSL https://github.com/scyto/truenas-nvidia-blackwell/releases/latest/download/install.sh \
+curl -fsSL https://github.com/scyto/truenas-nvidia-rtx6000-pro-mig/releases/latest/download/install.sh \
   | sudo bash -s -- --mig-profiles=47,47,14,14 --pool=fast
 ```
 
@@ -37,7 +37,7 @@ See `sudo ./install.sh --help` for all options.
 
 ## Manual Install
 
-1. Download `nvidia.raw` and `nvidia.raw.sha256` from [Releases](https://github.com/scyto/truenas-nvidia-blackwell/releases)
+1. Download `nvidia.raw` and `nvidia.raw.sha256` from [Releases](https://github.com/scyto/truenas-nvidia-rtx6000-pro-mig/releases)
 
 2. Verify checksum:
    ```bash

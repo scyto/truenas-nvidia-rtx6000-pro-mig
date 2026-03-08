@@ -12,7 +12,7 @@
 #   ./install-runner.sh
 #
 # It will prompt for your runner token from:
-#   https://github.com/scyto/truenas-nvidia-blackwell/settings/actions/runners/new
+#   https://github.com/scyto/truenas-nvidia-rtx6000-pro-mig/settings/actions/runners/new
 
 set -euo pipefail
 
@@ -176,7 +176,7 @@ write_files:
       #!/bin/bash
       set -euo pipefail
 
-      REPO="https://github.com/scyto/truenas-nvidia-blackwell"
+      REPO="https://github.com/scyto/truenas-nvidia-rtx6000-pro-mig"
       RUNNER_DIR="\$HOME/actions-runner"
 
       if [ -d "\$RUNNER_DIR/.credentials" ] || [ -f "\$RUNNER_DIR/.runner" ]; then
