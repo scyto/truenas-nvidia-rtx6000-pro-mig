@@ -70,6 +70,19 @@ jobs:
           echo "After cleanup:"
           df -h /
 
+      - name: Add swap space
+        run: |
+          echo "Current swap:"
+          free -h | grep -i swap
+          sudo swapoff /swapfile 2>/dev/null || true
+          sudo rm -f /swapfile
+          sudo fallocate -l 20G /swapfile
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          echo "After adding swap:"
+          free -h
+
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
