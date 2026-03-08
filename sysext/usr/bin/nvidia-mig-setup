@@ -29,26 +29,32 @@ if [ -z "${MIG_PROFILES:-}" ]; then
     exit 0
 fi
 
-# --- Check MIG mode ---
-MIG_MODE=$(nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader 2>/dev/null || echo "N/A")
+# --- Ensure MIG mode is enabled ---
+MIG_MODE=$(/usr/bin/nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader 2>/dev/null || echo "N/A")
 if [ "$MIG_MODE" != "Enabled" ]; then
-    log "MIG mode not enabled (current: $MIG_MODE), skipping"
-    exit 0
+    log "MIG mode not enabled (current: $MIG_MODE), enabling..."
+    /usr/bin/nvidia-smi -mig 1 2>/dev/null || { log "ERROR: Failed to enable MIG mode"; exit 0; }
+    MIG_MODE=$(/usr/bin/nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader 2>/dev/null || echo "N/A")
+    if [ "$MIG_MODE" != "Enabled" ]; then
+        log "MIG mode enabled but pending reboot (current: $MIG_MODE)"
+        exit 0
+    fi
+    log "MIG mode enabled"
 fi
 
 # --- Recreate MIG instances (idempotent) ---
 log "Destroying existing MIG instances..."
-nvidia-smi mig -dci 2>/dev/null || true
-nvidia-smi mig -dgi 2>/dev/null || true
+/usr/bin/nvidia-smi mig -dci 2>/dev/null || true
+/usr/bin/nvidia-smi mig -dgi 2>/dev/null || true
 
 log "Creating MIG instances: $MIG_PROFILES"
-if ! nvidia-smi mig -cgi "$MIG_PROFILES" -C; then
+if ! /usr/bin/nvidia-smi mig -cgi "$MIG_PROFILES" -C; then
     log "ERROR: Failed to create MIG instances"
     exit 0
 fi
 
 log "MIG instances created successfully"
-nvidia-smi mig -lgi 2>/dev/null || true
+/usr/bin/nvidia-smi mig -lgi 2>/dev/null || true
 
 # --- Remap app GPU UUIDs ---
 # Find the first compute-only MIG instance UUID (non-gfx profile).
@@ -66,7 +72,7 @@ while IFS= read -r line; do
         uuid=$(echo "$line" | sed -n 's/.*UUID: \([^)]*\)).*/\1/p')
         [ -n "$uuid" ] && ALL_MIG_UUIDS+=("$uuid")
     fi
-done < <(nvidia-smi -L 2>/dev/null)
+done < <(/usr/bin/nvidia-smi -L 2>/dev/null)
 
 GI_PROFILES=()
 while IFS= read -r line; do
@@ -74,7 +80,7 @@ while IFS= read -r line; do
         pid=$(echo "$line" | sed -n 's/.*Profile ID[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p')
         [ -n "$pid" ] && GI_PROFILES+=("$pid")
     fi
-done < <(nvidia-smi mig -lgi 2>/dev/null)
+done < <(/usr/bin/nvidia-smi mig -lgi 2>/dev/null)
 
 if [ "${#ALL_MIG_UUIDS[@]}" -eq 0 ] || [ "${#GI_PROFILES[@]}" -eq 0 ]; then
     log "No MIG instances found, skipping UUID remap"
