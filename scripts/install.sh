@@ -395,16 +395,56 @@ MIGEOF
         nvidia-smi mig -dgi 2>/dev/null || true
         if nvidia-smi mig -cgi "$MIG_PROFILES" -C; then
             echo "MIG instances created successfully"
-            nvidia-smi mig -lgi 2>/dev/null || true
-
-            # Show MIG device UUIDs
             echo ""
-            echo "MIG device UUIDs:"
-            nvidia-smi -L 2>/dev/null | grep -E '(GPU |MIG)' || true
 
-            # Show which TrueNAS apps have GPU assignments
+            # Build MIG device list with types
+            # Correlate -lgi (profile IDs + GI IDs) with -L (UUIDs) by position
+            mapfile -t MIG_UUIDS < <(nvidia-smi -L 2>/dev/null | grep -oP 'MIG.*UUID:\s+\K[^)]+')
+            mapfile -t MIG_NAMES < <(nvidia-smi -L 2>/dev/null | grep 'MIG' | sed 's/.*MIG /MIG /' | sed 's/Device.*//')
+            mapfile -t MIG_PROFILE_IDS < <(nvidia-smi mig -lgi 2>/dev/null | grep -oP 'Profile ID\s+:\s+\K[0-9]+')
+
+            echo "=== MIG Devices ==="
+            for i in "${!MIG_UUIDS[@]}"; do
+                pid="${MIG_PROFILE_IDS[$i]:-unknown}"
+                case "$pid" in
+                    47|35|32) dtype="gfx+compute" ;;
+                    14|5|0)   dtype="compute-only" ;;
+                    64|21|65) dtype="compute+media" ;;
+                    67|66)    dtype="compute (no media)" ;;
+                    *)        dtype="unknown" ;;
+                esac
+                echo "  [$((i+1))] ${MIG_NAMES[$i]:-MIG}  (${dtype})  ${MIG_UUIDS[$i]}"
+            done
+
+            # Get PCI slot for GPU assignments
+            PCI_SLOT=$(midclt call app.gpu_choices 2>/dev/null \
+                | python3 -c "
+import sys, json
+try:
+    choices = json.load(sys.stdin)
+    for slot, desc in choices.items():
+        if 'nvidia' in desc.lower() or 'NVIDIA' in desc:
+            print(slot, end='')
+            break
+except Exception:
+    pass
+" 2>/dev/null)
+
+            # Get list of TrueNAS apps
+            mapfile -t APP_NAMES < <(midclt call app.query 2>/dev/null \
+                | python3 -c "
+import sys, json
+try:
+    apps = json.load(sys.stdin)
+    for app in apps:
+        print(app.get('name', ''))
+except Exception:
+    pass
+" 2>/dev/null)
+
+            # Show current app GPU assignments
             echo ""
-            echo "TrueNAS app GPU assignments:"
+            echo "Current app GPU assignments:"
             midclt call app.query 2>/dev/null | python3 -c "
 import sys, json
 try:
@@ -426,6 +466,61 @@ try:
 except Exception:
     print('  (could not query apps)')
 " 2>/dev/null || echo "  (could not query apps)"
+
+            # Interactive assignment (only if we have apps, a PCI slot, and a tty)
+            if [ "${#APP_NAMES[@]}" -gt 0 ] && [ -n "$PCI_SLOT" ] && [ -t 0 ] || [ -e /dev/tty ]; then
+                echo ""
+                echo "=== Assign MIG devices to apps ==="
+                echo "Available apps:"
+                for i in "${!APP_NAMES[@]}"; do
+                    echo "  [$((i+1))] ${APP_NAMES[$i]}"
+                done
+
+                echo ""
+                echo "Enter assignments as DEVICE_NUM=APP_NUM (e.g., 1=3), one per line."
+                echo "Press Enter on a blank line when done."
+                echo ""
+                while true; do
+                    printf "Assign: " >&2
+                    if [ -t 0 ]; then
+                        read -r assignment
+                    else
+                        read -r assignment </dev/tty || break
+                    fi
+                    [ -z "$assignment" ] && break
+
+                    dev_num="${assignment%%=*}"
+                    app_num="${assignment##*=}"
+
+                    # Validate
+                    if ! [[ "$dev_num" =~ ^[0-9]+$ ]] || ! [[ "$app_num" =~ ^[0-9]+$ ]]; then
+                        echo "  Invalid format. Use DEVICE_NUM=APP_NUM (e.g., 1=3)"
+                        continue
+                    fi
+
+                    dev_idx=$((dev_num - 1))
+                    app_idx=$((app_num - 1))
+
+                    if [ "$dev_idx" -lt 0 ] || [ "$dev_idx" -ge "${#MIG_UUIDS[@]}" ]; then
+                        echo "  Invalid device number: $dev_num"
+                        continue
+                    fi
+                    if [ "$app_idx" -lt 0 ] || [ "$app_idx" -ge "${#APP_NAMES[@]}" ]; then
+                        echo "  Invalid app number: $app_num"
+                        continue
+                    fi
+
+                    sel_uuid="${MIG_UUIDS[$dev_idx]}"
+                    sel_app="${APP_NAMES[$app_idx]}"
+
+                    echo "  Assigning ${sel_uuid} to ${sel_app}..."
+                    if midclt call app.update "$sel_app" "{\"values\":{\"resources\":{\"gpus\":{\"use_all_gpus\":false,\"nvidia_gpu_selection\":{\"$PCI_SLOT\":{\"use_gpu\":true,\"uuid\":\"$sel_uuid\"}}}}}}" 2>/dev/null; then
+                        echo "  Assigned MIG device $dev_num to ${sel_app}"
+                    else
+                        echo "  WARNING: Failed to assign MIG device to ${sel_app}"
+                    fi
+                done
+            fi
         else
             echo "WARNING: Failed to create MIG instances"
         fi
