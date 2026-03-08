@@ -65,6 +65,16 @@ jobs:
         run: |
           echo "train=$(cat train | tr -d '[:space:]')" >> "$GITHUB_OUTPUT"
 
+      - name: Update tracked version
+        if: steps.check_release.outputs.new_release == 'true'
+        run: |
+          echo -n "${{ steps.check_release.outputs.new_version }}" > version
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add version
+          git commit -m "Update tracked TrueNAS version to ${{ steps.check_release.outputs.new_version }}"
+          git push
+
       - name: Trigger build for new TrueNAS release
         if: steps.check_release.outputs.new_release == 'true'
         uses: actions/github-script@v7

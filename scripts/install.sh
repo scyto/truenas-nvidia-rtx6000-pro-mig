@@ -94,12 +94,10 @@ else:
 
     # Verify checksum
     echo "Verifying checksum..."
-    cd /tmp
-    if ! sha256sum -c nvidia.raw.sha256; then
+    if ! (cd /tmp && sha256sum -c nvidia.raw.sha256); then
         echo "ERROR: Checksum verification failed!"
         exit 1
     fi
-    cd -
     echo "Checksum OK"
 fi
 
@@ -213,6 +211,8 @@ echo "Backing up nvidia.raw to persistent storage..."
 cp /tmp/nvidia.raw "${PERSIST_DIR}/nvidia.raw"
 
 # --- Write POSTINIT script to persistent storage ---
+# NOTE: This is an inline copy of scripts/nvidia-postinit.sh.
+# Keep both copies in sync when making changes.
 echo "Writing POSTINIT script..."
 cat > "${PERSIST_DIR}/nvidia-postinit.sh" <<'POSTINIT_EOF'
 #!/usr/bin/env bash
@@ -267,7 +267,12 @@ if [ -n "$USR_DATASET" ]; then
 fi
 
 log "Copying nvidia.raw from backup..."
-cp "$NVIDIA_RAW_BACKUP" "$SYSEXT_TARGET"
+if ! cp "$NVIDIA_RAW_BACKUP" "$SYSEXT_TARGET"; then
+    log "ERROR: Failed to copy nvidia.raw from backup"
+    # Restore readonly before exiting
+    [ -n "$USR_DATASET" ] && zfs set readonly=on "$USR_DATASET" 2>/dev/null || true
+    exit 0
+fi
 
 if [ -n "$USR_DATASET" ]; then
     zfs set readonly=on "$USR_DATASET"
@@ -305,10 +310,11 @@ import sys, json
 try:
     scripts = json.load(sys.stdin)
     for s in scripts:
-        if 'nvidia-postinit' in s.get('script', '') or 'nvidia-gpu' in s.get('script', ''):
+        cmd = s.get('command', '') or s.get('script', '')
+        if 'nvidia-postinit' in cmd or 'nvidia-gpu' in cmd:
             print(s['id'], end='')
             break
-except:
+except Exception:
     pass
 " 2>/dev/null)
 

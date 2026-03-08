@@ -62,7 +62,7 @@ try:
         if 'nvidia-postinit' in s.get('script', '') or 'nvidia-postinit' in s.get('command', '') or 'nvidia-gpu' in s.get('script', '') or 'nvidia-gpu' in s.get('command', ''):
             print(s['id'], end='')
             break
-except:
+except Exception:
     pass
 " 2>/dev/null)
 

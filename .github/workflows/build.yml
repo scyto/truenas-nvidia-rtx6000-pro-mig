@@ -317,7 +317,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/apt-cache
-          key: apt-deps-${{ runner.os }}-v1
+          key: apt-deps-${{ runner.os }}-v3
 
       - name: Install build dependencies
         run: |
@@ -556,7 +556,6 @@ jobs:
             artifacts/extensions/nvidia.raw.sha256
             scripts/install.sh
             scripts/restore.sh
-            scripts/nvidia-postinit.sh
           draft: false
           prerelease: false
         env:

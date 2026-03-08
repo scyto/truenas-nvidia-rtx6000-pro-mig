@@ -1,6 +1,6 @@
 [Unit]
 Description=NVIDIA MIG Instance Setup
-After=nvidia-persistenced.service
+After=nvidia-persistenced.service local-fs.target
 Before=docker.service
 ConditionPathExists=/usr/bin/nvidia-smi
 

@@ -54,67 +54,44 @@ nvidia-smi mig -lgi 2>/dev/null || true
 # Find the first compute-only MIG instance UUID (non-gfx profile).
 # Profile IDs for compute-only: 14 (1g.24gb), 5 (2g.48gb), 0 (4g.96gb)
 # Profile IDs for +gfx: 47 (1g.24gb+gfx), 35 (2g.48gb+gfx), 32 (4g.96gb+gfx)
+#
+# Strategy: correlate nvidia-smi mig -lgi (profile IDs, ordered by GI) with
+# nvidia-smi -L (MIG UUIDs, same order). The Device index in -L output is a
+# sequential counter and does NOT equal the GI ID from -lgi, so we match by
+# position instead.
 
-COMPUTE_GI=""
+ALL_MIG_UUIDS=()
 while IFS= read -r line; do
-    # Look for GPU instance lines with non-gfx profile IDs
-    if echo "$line" | grep -qE 'Profile ID\s+:\s+(14|5|0)\b'; then
-        COMPUTE_GI=$(echo "$line" | grep -oP 'ID\s+:\s+\K[0-9]+' | head -1)
-        break
-    fi
-done < <(nvidia-smi mig -lgi 2>/dev/null)
-
-if [ -z "$COMPUTE_GI" ]; then
-    log "No compute-only MIG instance found, skipping UUID remap"
-    exit 0
-fi
-
-# Get the MIG UUID for this GPU instance
-COMPUTE_UUID=""
-while IFS= read -r line; do
-    if echo "$line" | grep -qP "MIG\s+\S+\s+Device\s+"; then
-        CURRENT_UUID=$(echo "$line" | grep -oP 'UUID:\s+\K[^)]+')
-        # Check if this MIG device belongs to our compute GI
-        CURRENT_GI=$(echo "$line" | grep -oP 'Device\s+\K[0-9]+')
-        if [ "$CURRENT_GI" = "$COMPUTE_GI" ]; then
-            COMPUTE_UUID="$CURRENT_UUID"
-            break
-        fi
+    if echo "$line" | grep -qP 'MIG.*UUID:'; then
+        uuid=$(echo "$line" | grep -oP 'UUID:\s+\K[^)]+')
+        ALL_MIG_UUIDS+=("$uuid")
     fi
 done < <(nvidia-smi -L 2>/dev/null)
 
-# Alternative: parse nvidia-smi -L more directly
-# The MIG device listing order matches the GI creation order
-if [ -z "$COMPUTE_UUID" ]; then
-    # Fallback: get all MIG UUIDs and use nvidia-smi mig -lgi to find compute ones
-    ALL_MIG_UUIDS=()
-    while IFS= read -r line; do
-        if echo "$line" | grep -qP 'MIG.*UUID:'; then
-            uuid=$(echo "$line" | grep -oP 'UUID:\s+\K[^)]+')
-            ALL_MIG_UUIDS+=("$uuid")
-        fi
-    done < <(nvidia-smi -L 2>/dev/null)
+GI_PROFILES=()
+while IFS= read -r line; do
+    if echo "$line" | grep -qP 'Profile ID\s+:'; then
+        pid=$(echo "$line" | grep -oP 'Profile ID\s+:\s+\K[0-9]+')
+        GI_PROFILES+=("$pid")
+    fi
+done < <(nvidia-smi mig -lgi 2>/dev/null)
 
-    # Get GI profile IDs in order
-    GI_PROFILES=()
-    while IFS= read -r line; do
-        if echo "$line" | grep -qP 'Profile ID\s+:'; then
-            pid=$(echo "$line" | grep -oP 'Profile ID\s+:\s+\K[0-9]+')
-            GI_PROFILES+=("$pid")
-        fi
-    done < <(nvidia-smi mig -lgi 2>/dev/null)
-
-    # Find first compute-only (non-gfx) UUID
-    for i in "${!GI_PROFILES[@]}"; do
-        pid="${GI_PROFILES[$i]}"
-        if [ "$pid" = "14" ] || [ "$pid" = "5" ] || [ "$pid" = "0" ]; then
-            if [ "$i" -lt "${#ALL_MIG_UUIDS[@]}" ]; then
-                COMPUTE_UUID="${ALL_MIG_UUIDS[$i]}"
-                break
-            fi
-        fi
-    done
+if [ "${#ALL_MIG_UUIDS[@]}" -eq 0 ] || [ "${#GI_PROFILES[@]}" -eq 0 ]; then
+    log "No MIG instances found, skipping UUID remap"
+    exit 0
 fi
+
+# Find first compute-only (non-gfx) UUID by matching position
+COMPUTE_UUID=""
+for i in "${!GI_PROFILES[@]}"; do
+    pid="${GI_PROFILES[$i]}"
+    if [ "$pid" = "14" ] || [ "$pid" = "5" ] || [ "$pid" = "0" ]; then
+        if [ "$i" -lt "${#ALL_MIG_UUIDS[@]}" ]; then
+            COMPUTE_UUID="${ALL_MIG_UUIDS[$i]}"
+            break
+        fi
+    fi
+done
 
 if [ -z "$COMPUTE_UUID" ]; then
     log "Could not determine compute-only MIG UUID, skipping app remap"
@@ -144,7 +121,7 @@ try:
         if 'nvidia' in desc.lower() or 'NVIDIA' in desc:
             print(slot, end='')
             break
-except:
+except Exception:
     pass
 " 2>/dev/null)
 
@@ -161,7 +138,7 @@ import sys, json
 
 try:
     apps = json.load(sys.stdin)
-except:
+except Exception:
     sys.exit(0)
 
 pci_slot = '$PCI_SLOT'

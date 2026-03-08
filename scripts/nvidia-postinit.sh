@@ -2,6 +2,9 @@
 # TrueNAS POSTINIT script: reinstalls nvidia.raw sysext after OS updates.
 # Stored on persistent pool; registered via midclt during install.
 # Idempotent — safe to run on every boot.
+#
+# NOTE: This script is also embedded inline in install.sh (heredoc).
+# Keep both copies in sync when making changes.
 
 set -uo pipefail
 
@@ -50,7 +53,12 @@ if [ -n "$USR_DATASET" ]; then
 fi
 
 log "Copying nvidia.raw from backup..."
-cp "$NVIDIA_RAW_BACKUP" "$SYSEXT_TARGET"
+if ! cp "$NVIDIA_RAW_BACKUP" "$SYSEXT_TARGET"; then
+    log "ERROR: Failed to copy nvidia.raw from backup"
+    # Restore readonly before exiting
+    [ -n "$USR_DATASET" ] && zfs set readonly=on "$USR_DATASET" 2>/dev/null || true
+    exit 0
+fi
 
 if [ -n "$USR_DATASET" ]; then
     zfs set readonly=on "$USR_DATASET"

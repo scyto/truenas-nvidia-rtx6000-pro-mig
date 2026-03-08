@@ -38,7 +38,7 @@ jobs:
 
           # Check next minor version bump
           for NEW_MINOR in $(seq $((MINOR + 1)) $((MINOR + 3))); do
-            for NEW_PATCH in $(seq 1 30); do
+            for NEW_PATCH in $(seq 0 30); do
               CANDIDATE="${MAJOR}.${NEW_MINOR}.$(printf '%02d' ${NEW_PATCH})"
               HTTP_CODE=$(curl -sI -o /dev/null -w "%{http_code}" \
                 "https://us.download.nvidia.com/XFree86/Linux-x86_64/${CANDIDATE}/NVIDIA-Linux-x86_64-${CANDIDATE}-no-compat32.run" \
