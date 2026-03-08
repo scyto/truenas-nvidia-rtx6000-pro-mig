@@ -186,7 +186,7 @@ To assign a MIG device to a TrueNAS app:
 midclt call app.gpu_choices | python3 -m json.tool
 
 # Then update the app to use a specific MIG UUID
-midclt call -job app.update "APP_NAME" '{"values": {"resources": {"gpus": {"use_all_gpus": false, "nvidia_gpu_selection": {"PCI_SLOT": {"use_gpu": true, "uuid": "MIG-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"}}}}}}'
+midclt call app.update "APP_NAME" '{"values": {"resources": {"gpus": {"use_all_gpus": false, "nvidia_gpu_selection": {"PCI_SLOT": {"use_gpu": true, "uuid": "MIG-xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"}}}}}}'
 ```
 
 Replace `APP_NAME` with your app name (e.g., `plex`, `frigate`), `PCI_SLOT` with the PCI address from `app.gpu_choices` (e.g., `0000:0f:00.0`), and the UUID with the MIG device UUID from `nvidia-smi -L`.
