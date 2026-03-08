@@ -19,6 +19,10 @@ on:
         description: 'Optional: URL to DisplayModeSelector package from developer.nvidia.com/displaymodeselector (leave empty to skip)'
         required: false
         default: ''
+      retry_attempt:
+        description: 'Internal: retry counter for timeout recovery (do not set manually)'
+        required: false
+        default: '0'
 
   workflow_call:
     inputs:
@@ -35,9 +39,14 @@ on:
         type: string
         required: false
         default: ''
+      retry_attempt:
+        type: string
+        required: false
+        default: '0'
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   # ─── Job 1: Build all TrueNAS packages (~5-6h first run, incremental on cache) ─
@@ -234,11 +243,26 @@ jobs:
           path: scale-build/tmp/ccache
           key: ccache-${{ inputs.truenas_version }}-${{ github.run_id }}
 
-      - name: Fail if packages build timed out
-        if: steps.build-packages.outcome == 'failure'
+      - name: Re-dispatch workflow on timeout
+        if: steps.build-packages.outcome == 'failure' && fromJSON(inputs.retry_attempt) < 3
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "ERROR: make packages did not complete (likely timed out)."
-          echo "Caches have been saved — next run will resume from where this one stopped."
+          NEXT_ATTEMPT=$(( ${{ inputs.retry_attempt }} + 1 ))
+          echo "Build timed out (attempt ${{ inputs.retry_attempt }}). Caches saved. Dispatching retry ${NEXT_ATTEMPT}/3..."
+          gh workflow run build.yml \
+            -f truenas_version="${{ inputs.truenas_version }}" \
+            -f nvidia_driver_version="${{ inputs.nvidia_driver_version }}" \
+            -f train_name="${{ inputs.train_name }}" \
+            -f display_mode_selector_url="${{ inputs.display_mode_selector_url }}" \
+            -f retry_attempt="${NEXT_ATTEMPT}"
+          echo "Retry dispatched successfully."
+
+      - name: Fail if packages build timed out (retries exhausted)
+        if: steps.build-packages.outcome == 'failure' && fromJSON(inputs.retry_attempt) >= 3
+        run: |
+          echo "ERROR: make packages did not complete after 3 retry attempts."
+          echo "Caches have been saved — manually re-run the workflow to continue."
           exit 1
 
       - name: Compress built packages for transfer to Job 2
