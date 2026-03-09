@@ -29,50 +29,63 @@ if [ ! -f "$NVIDIA_RAW_BACKUP" ]; then
     exit 0
 fi
 
-# --- Compare checksums ---
+# --- Compare checksums — only skip the file copy if matching ---
+NEED_COPY=true
 if [ -f "$SYSEXT_TARGET" ]; then
     INSTALLED_SUM=$(sha256sum "$SYSEXT_TARGET" | awk '{print $1}')
     BACKUP_SUM=$(sha256sum "$NVIDIA_RAW_BACKUP" | awk '{print $1}')
     if [ "$INSTALLED_SUM" = "$BACKUP_SUM" ]; then
-        log "nvidia.raw already matches backup, skipping"
-        exit 0
+        log "nvidia.raw already matches backup, skipping copy"
+        NEED_COPY=false
+    else
+        log "nvidia.raw differs from backup (update detected), reinstalling..."
     fi
-    log "nvidia.raw differs from backup (update detected), reinstalling..."
 else
     log "nvidia.raw missing, installing from backup..."
 fi
 
-# --- Reinstall nvidia.raw ---
-log "Unmerging sysext..."
-systemd-sysext unmerge 2>/dev/null || true
+# --- Copy nvidia.raw if needed ---
+if [ "$NEED_COPY" = "true" ]; then
+    log "Unmerging sysext..."
+    systemd-sysext unmerge 2>/dev/null || true
 
-log "Making /usr writable..."
-USR_DATASET=$(zfs list -H -o name /usr 2>/dev/null)
-if [ -n "$USR_DATASET" ]; then
-    zfs set readonly=off "$USR_DATASET"
+    log "Making /usr writable..."
+    USR_DATASET=$(zfs list -H -o name /usr 2>/dev/null)
+    if [ -n "$USR_DATASET" ]; then
+        zfs set readonly=off "$USR_DATASET"
+    fi
+
+    log "Copying nvidia.raw from backup..."
+    if ! cp "$NVIDIA_RAW_BACKUP" "$SYSEXT_TARGET"; then
+        log "ERROR: Failed to copy nvidia.raw from backup"
+        [ -n "$USR_DATASET" ] && zfs set readonly=on "$USR_DATASET" 2>/dev/null || true
+        exit 0
+    fi
+
+    if [ -n "$USR_DATASET" ]; then
+        zfs set readonly=on "$USR_DATASET"
+    fi
 fi
 
-log "Copying nvidia.raw from backup..."
-if ! cp "$NVIDIA_RAW_BACKUP" "$SYSEXT_TARGET"; then
-    log "ERROR: Failed to copy nvidia.raw from backup"
-    # Restore readonly before exiting
-    [ -n "$USR_DATASET" ] && zfs set readonly=on "$USR_DATASET" 2>/dev/null || true
-    exit 0
+# --- Ensure nvidia symlink exists (always, even if copy was skipped) ---
+if [ ! -L /etc/extensions/nvidia.raw ] || [ "$(readlink /etc/extensions/nvidia.raw)" != "$SYSEXT_TARGET" ]; then
+    log "Creating nvidia symlink in /etc/extensions/..."
+    mkdir -p /etc/extensions
+    ln -sf "$SYSEXT_TARGET" /etc/extensions/nvidia.raw
+    NEED_MERGE=true
+else
+    log "nvidia symlink already correct"
+    NEED_MERGE=false
 fi
 
-if [ -n "$USR_DATASET" ]; then
-    zfs set readonly=on "$USR_DATASET"
+# --- Merge sysext if we copied or fixed the symlink ---
+if [ "$NEED_COPY" = "true" ] || [ "$NEED_MERGE" = "true" ]; then
+    log "Merging sysext..."
+    systemd-sysext unmerge 2>/dev/null || true
+    systemd-sysext merge
+    log "Reloading systemd..."
+    systemctl daemon-reload
 fi
-
-log "Ensuring nvidia symlink in /etc/extensions/..."
-mkdir -p /etc/extensions
-ln -sf "$SYSEXT_TARGET" /etc/extensions/nvidia.raw
-
-log "Merging sysext..."
-systemd-sysext merge
-
-log "Reloading systemd..."
-systemctl daemon-reload
 
 # --- Enable GPU persistence mode ---
 if systemctl list-unit-files nvidia-persistenced.service &>/dev/null; then
