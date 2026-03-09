@@ -173,6 +173,11 @@ cp /tmp/nvidia.raw "${NVIDIA_RAW}"
 zfs set readonly=on "${USR_DATASET}"
 
 # Re-enable NVIDIA support
+# TrueNAS uses symlinks in /etc/extensions/ to control which sysext extensions load.
+# docker.update '{"nvidia": false}' removes the nvidia symlink — we must recreate it.
+echo "[diag] /etc/extensions/ before symlink: $(ls /etc/extensions/ 2>&1)"
+ln -sf "${NVIDIA_RAW}" /etc/extensions/nvidia.raw
+echo "[diag] /etc/extensions/ after symlink: $(ls /etc/extensions/ 2>&1)"
 echo "Merging sysext and re-enabling NVIDIA..."
 systemd-sysext merge
 
@@ -402,19 +407,18 @@ MIGEOF
         || echo "WARNING: Could not enable nvidia-mig-setup.service"
 
     # Ensure sysext overlay is still intact before MIG operations
-    # (middleware async sysext remount from docker.update can undo our merge)
+    # (middleware async sysext remount from docker.update can remove nvidia symlink)
     if ! [ -x /usr/bin/nvidia-smi ]; then
         echo "[diag] nvidia-smi disappeared before MIG enable"
-        echo "[diag] Current sysext status:"
-        systemd-sysext status 2>&1 || true
-        echo "[diag] Unmerging stale sysext..."
+        echo "[diag] sysext status: $(systemd-sysext status 2>&1 | head -3)"
+        echo "[diag] /etc/extensions/: $(ls /etc/extensions/ 2>&1)"
+        echo "[diag] Recreating nvidia symlink and re-merging..."
+        ln -sf "${NVIDIA_RAW}" /etc/extensions/nvidia.raw
         systemd-sysext unmerge 2>/dev/null || true
-        echo "[diag] Re-merging sysext..."
         systemd-sysext merge
         systemctl daemon-reload
         echo "[diag] After re-merge: nvidia-smi exists=$(ls /usr/bin/nvidia-smi 2>&1)"
-        echo "[diag] sysext status after re-merge:"
-        systemd-sysext status 2>&1 || true
+        echo "[diag] sysext status: $(systemd-sysext status 2>&1 | head -3)"
         if ! [ -x /usr/bin/nvidia-smi ]; then
             echo "[diag] ERROR: nvidia-smi still missing after re-merge!"
             echo "[diag] Extensions dir: $(ls /usr/share/truenas/sysext-extensions/ 2>&1)"
@@ -458,19 +462,18 @@ MIGEOF
             echo "[diag] Before MIG enumeration: nvidia-smi exists=$(ls /usr/bin/nvidia-smi 2>&1)"
             echo "[diag] sysext status: $(systemd-sysext status 2>&1 | head -3)"
 
-            # Ensure sysext overlay is still intact (middleware async remount can undo it)
+            # Ensure sysext overlay is still intact (middleware async remount removes nvidia symlink)
             if ! [ -x /usr/bin/nvidia-smi ]; then
                 echo "[diag] nvidia-smi disappeared before enumeration"
-                echo "[diag] Current sysext status:"
-                systemd-sysext status 2>&1 || true
-                echo "[diag] Unmerging stale sysext..."
+                echo "[diag] sysext status: $(systemd-sysext status 2>&1 | head -3)"
+                echo "[diag] /etc/extensions/: $(ls /etc/extensions/ 2>&1)"
+                echo "[diag] Recreating nvidia symlink and re-merging..."
+                ln -sf "${NVIDIA_RAW}" /etc/extensions/nvidia.raw
                 systemd-sysext unmerge 2>/dev/null || true
-                echo "[diag] Re-merging sysext..."
                 systemd-sysext merge
                 systemctl daemon-reload
                 echo "[diag] After re-merge: nvidia-smi exists=$(ls /usr/bin/nvidia-smi 2>&1)"
-                echo "[diag] sysext status after re-merge:"
-                systemd-sysext status 2>&1 || true
+                echo "[diag] sysext status: $(systemd-sysext status 2>&1 | head -3)"
                 if ! [ -x /usr/bin/nvidia-smi ]; then
                     echo "[diag] ERROR: nvidia-smi still missing after re-merge!"
                     echo "[diag] Extensions dir: $(ls /usr/share/truenas/sysext-extensions/ 2>&1)"
