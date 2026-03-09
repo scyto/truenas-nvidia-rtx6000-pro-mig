@@ -330,6 +330,9 @@ if [ -n "$USR_DATASET" ]; then
     zfs set readonly=on "$USR_DATASET"
 fi
 
+log "Ensuring nvidia symlink in /etc/extensions/..."
+ln -sf "$SYSEXT_TARGET" /etc/extensions/nvidia.raw
+
 log "Merging sysext..."
 systemd-sysext merge
 
