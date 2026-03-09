@@ -4,6 +4,9 @@
 
 set -euo pipefail
 
+# On unexpected failure, print recovery instructions
+trap 'echo ""; echo "ERROR: Restore failed at line $LINENO"; echo "Re-enable Docker: sudo midclt call docker.update '\''{ \"nvidia\": true }'\''"; ' ERR
+
 SYSEXT_DIR="/usr/share/truenas/sysext-extensions"
 NVIDIA_RAW="${SYSEXT_DIR}/nvidia.raw"
 NVIDIA_BAK="${SYSEXT_DIR}/nvidia.raw.bak"
