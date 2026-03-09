@@ -32,39 +32,47 @@ echo "Stopping Docker and apps (releasing GPU)..."
 midclt call docker.update '{"nvidia": false}'
 
 echo "Waiting for GPU processes to stop..."
-for attempt in $(seq 1 24); do
-    GPU_PROCS=$(/usr/bin/nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | wc -l)
-    if [ "${GPU_PROCS:-0}" -eq 0 ]; then
-        echo "GPU released (no processes running)"
-        break
-    fi
-    if [ "$attempt" -lt 24 ]; then
-        printf "\r  Waiting for %d GPU process(es) to stop... %ds / 120s" "$GPU_PROCS" "$((attempt * 5))"
-        sleep 5
-    else
-        echo ""
-        echo "WARNING: GPU processes still running after 120s, proceeding anyway"
-    fi
-done
+if [ -x /usr/bin/nvidia-smi ]; then
+    for attempt in $(seq 1 24); do
+        GPU_PROCS=$(/usr/bin/nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | wc -l || echo 0)
+        if [ "${GPU_PROCS:-0}" -eq 0 ]; then
+            echo "GPU released (no processes running)"
+            break
+        fi
+        if [ "$attempt" -lt 24 ]; then
+            printf "\r  Waiting for %d GPU process(es) to stop... %ds / 120s" "$GPU_PROCS" "$((attempt * 5))"
+            sleep 5
+        else
+            echo ""
+            echo "WARNING: GPU processes still running after 120s, proceeding anyway"
+        fi
+    done
+else
+    echo "nvidia-smi not available (sysext not loaded), skipping GPU process check"
+fi
 
 # --- Step 2: Clean up MIG (while GPU is free) ---
 echo ""
 echo "=== Cleaning up MIG ==="
 
-echo "Destroying MIG instances..."
-/usr/bin/nvidia-smi mig -dci 2>/dev/null || true
-/usr/bin/nvidia-smi mig -dgi 2>/dev/null || true
+if [ -x /usr/bin/nvidia-smi ]; then
+    echo "Destroying MIG instances..."
+    /usr/bin/nvidia-smi mig -dci 2>/dev/null || true
+    /usr/bin/nvidia-smi mig -dgi 2>/dev/null || true
 
-MIG_CUR=$(/usr/bin/nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader 2>/dev/null || echo "N/A")
-if [ "$MIG_CUR" = "Enabled" ]; then
-    echo "Disabling MIG mode..."
-    /usr/bin/nvidia-smi -mig 0 2>/dev/null || true
-    MIG_CUR_AFTER=$(/usr/bin/nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader 2>/dev/null || echo "N/A")
-    if [ "$MIG_CUR_AFTER" = "Enabled" ]; then
-        echo "MIG mode disabled (pending). Will take effect after reboot."
-    else
-        echo "MIG mode disabled"
+    MIG_CUR=$(/usr/bin/nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader 2>/dev/null || echo "N/A")
+    if [ "$MIG_CUR" = "Enabled" ]; then
+        echo "Disabling MIG mode..."
+        /usr/bin/nvidia-smi -mig 0 2>/dev/null || true
+        MIG_CUR_AFTER=$(/usr/bin/nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader 2>/dev/null || echo "N/A")
+        if [ "$MIG_CUR_AFTER" = "Enabled" ]; then
+            echo "MIG mode disabled (pending). Will take effect after reboot."
+        else
+            echo "MIG mode disabled"
+        fi
     fi
+else
+    echo "nvidia-smi not available, skipping MIG cleanup"
 fi
 
 systemctl disable nvidia-mig-setup.service 2>/dev/null || true
@@ -160,3 +168,7 @@ except Exception:
         echo "Docker still settling. Wait a few more seconds before running install."
     fi
 done
+
+echo ""
+echo "=== Restore complete ==="
+echo "Safe to re-run the install script."
