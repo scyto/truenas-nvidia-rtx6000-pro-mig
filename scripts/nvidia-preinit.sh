@@ -65,6 +65,7 @@ if [ -n "$USR_DATASET" ]; then
 fi
 
 log "Ensuring nvidia symlink in /etc/extensions/..."
+mkdir -p /etc/extensions
 ln -sf "$SYSEXT_TARGET" /etc/extensions/nvidia.raw
 
 log "Merging sysext..."

@@ -176,6 +176,7 @@ zfs set readonly=on "${USR_DATASET}"
 # TrueNAS uses symlinks in /etc/extensions/ to control which sysext extensions load.
 # docker.update '{"nvidia": false}' removes the nvidia symlink — we must recreate it.
 echo "[diag] /etc/extensions/ before symlink: $(ls /etc/extensions/ 2>&1)"
+mkdir -p /etc/extensions
 ln -sf "${NVIDIA_RAW}" /etc/extensions/nvidia.raw
 echo "[diag] /etc/extensions/ after symlink: $(ls /etc/extensions/ 2>&1)"
 echo "Merging sysext and re-enabling NVIDIA..."
@@ -331,6 +332,7 @@ if [ -n "$USR_DATASET" ]; then
 fi
 
 log "Ensuring nvidia symlink in /etc/extensions/..."
+mkdir -p /etc/extensions
 ln -sf "$SYSEXT_TARGET" /etc/extensions/nvidia.raw
 
 log "Merging sysext..."
@@ -416,6 +418,7 @@ MIGEOF
         echo "[diag] sysext status: $(systemd-sysext status 2>&1 | head -3)"
         echo "[diag] /etc/extensions/: $(ls /etc/extensions/ 2>&1)"
         echo "[diag] Recreating nvidia symlink and re-merging..."
+        mkdir -p /etc/extensions
         ln -sf "${NVIDIA_RAW}" /etc/extensions/nvidia.raw
         systemd-sysext unmerge 2>/dev/null || true
         systemd-sysext merge
@@ -471,6 +474,7 @@ MIGEOF
                 echo "[diag] sysext status: $(systemd-sysext status 2>&1 | head -3)"
                 echo "[diag] /etc/extensions/: $(ls /etc/extensions/ 2>&1)"
                 echo "[diag] Recreating nvidia symlink and re-merging..."
+                mkdir -p /etc/extensions
                 ln -sf "${NVIDIA_RAW}" /etc/extensions/nvidia.raw
                 systemd-sysext unmerge 2>/dev/null || true
                 systemd-sysext merge

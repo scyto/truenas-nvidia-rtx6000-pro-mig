@@ -98,6 +98,7 @@ if [ "$RESTORE_SYSEXT" = "true" ]; then
     zfs set readonly=on "${USR_DATASET}"
 
     echo "Ensuring nvidia symlink in /etc/extensions/..."
+    mkdir -p /etc/extensions
     ln -sf "${NVIDIA_RAW}" /etc/extensions/nvidia.raw
 
     echo "Merging sysext and re-enabling NVIDIA..."
