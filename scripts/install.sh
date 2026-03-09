@@ -428,15 +428,18 @@ MIGEOF
             # Build MIG device list with types
             # Use MIG_PROFILES order (matches creation order = UUID order)
             # Avoid process substitution <() — subshells can't see sysext paths
-            NVIDIA_SMI_L=$(/usr/bin/nvidia-smi -L 2>/dev/null || true)
+            NVIDIA_SMI_L=$(/usr/bin/nvidia-smi -L < /dev/null 2>&1 || true)
+            echo "DEBUG nvidia-smi -L output: [${NVIDIA_SMI_L:0:200}]"
             mapfile -t MIG_UUIDS <<< "$(echo "$NVIDIA_SMI_L" | grep 'MIG' | sed -n 's/.*UUID: \(MIG-[^)]*\)).*/\1/p')"
             mapfile -t MIG_NAMES <<< "$(echo "$NVIDIA_SMI_L" | grep 'MIG' | sed 's/.*MIG /MIG /' | sed 's/[[:space:]]*Device.*//')"
             # mapfile with <<< adds an empty trailing element if input ends with newline
             [ "${#MIG_UUIDS[@]}" -gt 0 ] && [ -z "${MIG_UUIDS[-1]}" ] && unset 'MIG_UUIDS[-1]'
             [ "${#MIG_NAMES[@]}" -gt 0 ] && [ -z "${MIG_NAMES[-1]}" ] && unset 'MIG_NAMES[-1]'
             if [ "${#MIG_UUIDS[@]}" -eq 0 ]; then
-                echo "WARNING: nvidia-smi -L returned no MIG UUIDs. Raw output:"
-                echo "$NVIDIA_SMI_L"
+                echo "WARNING: nvidia-smi -L returned no MIG UUIDs"
+                echo "Full output: [$NVIDIA_SMI_L]"
+                echo "which nvidia-smi: $(which /usr/bin/nvidia-smi 2>&1 || true)"
+                echo "ls nvidia-smi: $(ls -la /usr/bin/nvidia-smi 2>&1 || true)"
             fi
             IFS=',' read -ra PROFILE_ARRAY <<< "$MIG_PROFILES"
 
