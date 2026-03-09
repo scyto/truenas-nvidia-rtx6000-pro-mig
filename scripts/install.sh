@@ -190,9 +190,11 @@ fi
 
 systemctl daemon-reload
 
-# NOTE: Docker re-enable is deferred until after MIG setup.
-# midclt call docker.update '{"nvidia": true}' causes sysext remount,
-# which temporarily removes /usr/bin/nvidia-smi from disk.
+# Re-enable Docker with NVIDIA support now — any sysext remount triggered by
+# docker.update will complete long before MIG enumeration (~250 lines later).
+echo "Re-enabling NVIDIA in Docker..."
+midclt call docker.update '{"nvidia": true}'
+echo "[diag] After docker.update + sysext merge: nvidia-smi exists=$(ls /usr/bin/nvidia-smi 2>&1)"
 
 # Enable GPU persistence mode
 if systemctl list-unit-files nvidia-persistenced.service &>/dev/null; then
@@ -430,15 +432,19 @@ MIGEOF
 
             # Build MIG device list with types
             # Use MIG_PROFILES order (matches creation order = UUID order)
-            # Avoid process substitution <() — subshells can't see sysext paths
-            NVIDIA_SMI_L=$(/usr/bin/nvidia-smi -L 2>/dev/null || true)
-            mapfile -t MIG_UUIDS <<< "$(echo "$NVIDIA_SMI_L" | grep 'MIG' | sed -n 's/.*UUID: \(MIG-[^)]*\)).*/\1/p')"
-            mapfile -t MIG_NAMES <<< "$(echo "$NVIDIA_SMI_L" | grep 'MIG' | sed 's/.*MIG /MIG /' | sed 's/[[:space:]]*Device.*//')"
-            # mapfile with <<< adds an empty trailing element if input ends with newline
-            [ "${#MIG_UUIDS[@]}" -gt 0 ] && [ -z "${MIG_UUIDS[-1]}" ] && unset 'MIG_UUIDS[-1]'
-            [ "${#MIG_NAMES[@]}" -gt 0 ] && [ -z "${MIG_NAMES[-1]}" ] && unset 'MIG_NAMES[-1]'
+            echo "[diag] Before MIG enumeration: nvidia-smi exists=$(ls /usr/bin/nvidia-smi 2>&1)"
+            echo "[diag] sysext status: $(systemd-sysext status 2>&1 | head -3)"
+
+            mapfile -t MIG_UUIDS < <(/usr/bin/nvidia-smi -L 2>/dev/null | grep 'MIG' | sed -n 's/.*UUID: \(MIG-[^)]*\)).*/\1/p')
+            mapfile -t MIG_NAMES < <(/usr/bin/nvidia-smi -L 2>/dev/null | grep 'MIG' | sed 's/.*MIG /MIG /' | sed 's/[[:space:]]*Device.*//')
+
+            echo "[diag] MIG enumeration result: ${#MIG_UUIDS[@]} UUIDs found"
             if [ "${#MIG_UUIDS[@]}" -eq 0 ]; then
                 echo "WARNING: Could not enumerate MIG devices"
+                echo "[diag] nvidia-smi -L full output:"
+                /usr/bin/nvidia-smi -L 2>&1 || echo "[diag] nvidia-smi -L failed with exit code $?"
+                echo "[diag] nvidia-smi mig -lgi:"
+                /usr/bin/nvidia-smi mig -lgi 2>&1 || true
             fi
             IFS=',' read -ra PROFILE_ARRAY <<< "$MIG_PROFILES"
 
@@ -483,14 +489,9 @@ except Exception:
     pass
 " 2>/dev/null)
 
-            # Now re-enable Docker (deferred from earlier to avoid sysext remount
-            # during MIG setup — docker.update triggers overlay remount which
-            # temporarily removes /usr/bin/nvidia-smi)
-            echo ""
-            echo "Re-enabling NVIDIA in Docker..."
-            midclt call docker.update '{"nvidia": true}'
-
             # Wait for Docker and app service to be ready
+            # (Docker was re-enabled right after sysext merge — it should be settling now)
+            echo ""
             echo "Waiting for Docker and app service to come up (this can take 60-90s)..."
             MAX_WAIT=18  # 18 × 5s = 90s
             APP_COUNT=0
@@ -735,8 +736,10 @@ except Exception:
     fi
 fi
 
-# Ensure Docker is re-enabled (may already be if MIG path ran)
-midclt call docker.update '{"nvidia": true}' 2>/dev/null || true
+# Ensure Docker is re-enabled (safety net for non-MIG path)
+if [ -z "$MIG_PROFILES" ]; then
+    midclt call docker.update '{"nvidia": true}' 2>/dev/null || true
+fi
 
 echo ""
 echo "=== Persistence setup complete ==="
