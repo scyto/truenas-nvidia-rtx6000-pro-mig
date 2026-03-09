@@ -76,8 +76,10 @@ done < <(/usr/bin/nvidia-smi -L 2>/dev/null)
 
 GI_PROFILES=()
 while IFS= read -r line; do
-    if echo "$line" | grep -q 'Profile ID'; then
-        pid=$(echo "$line" | sed -n 's/.*Profile ID[[:space:]]*:[[:space:]]*\([0-9]*\).*/\1/p')
+    # Table format: |  0  MIG 2g.48gb   5   1   0:6  |
+    # Profile ID is the first number after the MIG name
+    if echo "$line" | grep -q 'MIG'; then
+        pid=$(echo "$line" | sed -n 's/.*MIG [^ ]*[[:space:]]*\([0-9][0-9]*\).*/\1/p')
         [ -n "$pid" ] && GI_PROFILES+=("$pid")
     fi
 done < <(/usr/bin/nvidia-smi mig -lgi 2>/dev/null)
@@ -87,11 +89,12 @@ if [ "${#ALL_MIG_UUIDS[@]}" -eq 0 ] || [ "${#GI_PROFILES[@]}" -eq 0 ]; then
     exit 0
 fi
 
-# Find first compute-only (non-gfx) UUID by matching position
+# Find first compute (non-gfx) UUID by matching position
+# Exclude only +gfx profiles (47, 35, 32) — all others are compute-capable
 COMPUTE_UUID=""
 for i in "${!GI_PROFILES[@]}"; do
     pid="${GI_PROFILES[$i]}"
-    if [ "$pid" = "14" ] || [ "$pid" = "5" ] || [ "$pid" = "0" ]; then
+    if [ "$pid" != "47" ] && [ "$pid" != "35" ] && [ "$pid" != "32" ]; then
         if [ "$i" -lt "${#ALL_MIG_UUIDS[@]}" ]; then
             COMPUTE_UUID="${ALL_MIG_UUIDS[$i]}"
             break
