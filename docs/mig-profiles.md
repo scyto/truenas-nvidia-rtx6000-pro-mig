@@ -66,22 +66,28 @@ The GPU has 4 slices (each slice = 2 SM partitions). Valid configurations and th
 
 Configs 6 and 7 use `+me.all` on the first instance (grabs all 4 media engines + OFA), leaving the remaining instances with no media engines (`-me`).
 
-## Slot Budget (8 slices total)
+## Example Configurations
 
-Example configurations that use all 8 compute slices:
+The GPU has 4 memory slices (~95 GiB total). Each 1g profile uses 1 slice, 2g uses 2, 4g uses all 4. You cannot exceed 4 slices.
 
-| Config | Instances | Total Memory |
-|--------|-----------|-------------|
-| `14,14,14,14` | 4x 1g.24gb | 96 GB |
-| `47,47,14,14` | 2x 1g.24gb+gfx + 2x 1g.24gb | 96 GB |
-| `5,5,14,14` | 2x 2g.48gb + 2x 1g.24gb | 144 GB |
-| `35,14,14,14,14` | 1x 2g.48gb+gfx + 4x 1g.24gb | 144 GB |
-| `0,0` | 2x 4g.96gb | 192 GB |
-| `32,14,14,14,14` | 1x 4g.96gb+gfx + 4x 1g.24gb | 192 GB |
+| Config | Instances | Slices | Memory |
+|--------|-----------|--------|--------|
+| `0` | 1x 4g.96gb | 4/4 | 95.0 GiB |
+| `32` | 1x 4g.96gb+gfx | 4/4 | 95.0 GiB |
+| `5,5` | 2x 2g.48gb | 4/4 | 94.8 GiB |
+| `5,14,14` | 1x 2g.48gb + 2x 1g.24gb | 4/4 | 94.6 GiB |
+| `5,47,14` | 1x 2g.48gb + 1x 1g.24gb+gfx + 1x 1g.24gb | 4/4 | 94.6 GiB |
+| `5,47,21` | 1x 2g.48gb + 1x 1g.24gb+gfx + 1x 1g.24gb+me | 4/4 | 94.6 GiB |
+| `14,14,14,14` | 4x 1g.24gb | 4/4 | 94.5 GiB |
+| `47,47,14,14` | 2x 1g.24gb+gfx + 2x 1g.24gb | 4/4 | 94.5 GiB |
+| `47,47,47,47` | 4x 1g.24gb+gfx | 4/4 | 94.5 GiB |
+| `35,14,14` | 1x 2g.48gb+gfx + 2x 1g.24gb | 4/4 | 94.6 GiB |
+| `5,14` | 1x 2g.48gb + 1x 1g.24gb | 3/4 | 71.0 GiB |
+| `14,14,14` | 3x 1g.24gb | 3/4 | 70.9 GiB |
 
 ## Notes
 
-- The GPU has 8 SM slices total. 1g profiles use 1 slice, 2g use 2, 4g use 4.
+- The GPU has 4 memory/SM slices (~95 GiB total). 1g profiles use 1 slice, 2g use 2, 4g use all 4.
 - `+me.all` profiles grab all media engines exclusively — only 1 instance allowed, and it conflicts with other instances that need media engines.
 - `+gfx` profiles are unique to RTX PRO 6000 Blackwell (GB20X architecture). They support OpenGL, Vulkan, and DirectX within MIG instances.
 - `-me` profiles are useful when you only need CUDA compute and want to leave media engines available for other instances.
