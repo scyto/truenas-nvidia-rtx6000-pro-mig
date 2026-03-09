@@ -57,14 +57,9 @@ log "MIG instances created successfully"
 /usr/bin/nvidia-smi mig -lgi 2>/dev/null || true
 
 # --- Remap app GPU UUIDs ---
-# Find the first compute-only MIG instance UUID (non-gfx profile).
-# Profile IDs for compute-only: 14 (1g.24gb), 5 (2g.48gb), 0 (4g.96gb)
-# Profile IDs for +gfx: 47 (1g.24gb+gfx), 35 (2g.48gb+gfx), 32 (4g.96gb+gfx)
-#
-# Strategy: correlate nvidia-smi mig -lgi (profile IDs, ordered by GI) with
-# nvidia-smi -L (MIG UUIDs, same order). The Device index in -L output is a
-# sequential counter and does NOT equal the GI ID from -lgi, so we match by
-# position instead.
+# All MIG profiles (including +gfx) are compute-capable.
+# MIG UUIDs change on every reboot because instances are volatile.
+# Update any TrueNAS apps that have stale MIG UUID assignments.
 
 ALL_MIG_UUIDS=()
 while IFS= read -r line; do
@@ -74,40 +69,14 @@ while IFS= read -r line; do
     fi
 done < <(/usr/bin/nvidia-smi -L 2>/dev/null)
 
-GI_PROFILES=()
-while IFS= read -r line; do
-    # Table format: |  0  MIG 2g.48gb   5   1   0:6  |
-    # Profile ID is the first number after the MIG name
-    if echo "$line" | grep -q 'MIG'; then
-        pid=$(echo "$line" | sed -n 's/.*MIG [^ ]*[[:space:]]*\([0-9][0-9]*\).*/\1/p')
-        [ -n "$pid" ] && GI_PROFILES+=("$pid")
-    fi
-done < <(/usr/bin/nvidia-smi mig -lgi 2>/dev/null)
-
-if [ "${#ALL_MIG_UUIDS[@]}" -eq 0 ] || [ "${#GI_PROFILES[@]}" -eq 0 ]; then
-    log "No MIG instances found, skipping UUID remap"
+if [ "${#ALL_MIG_UUIDS[@]}" -eq 0 ]; then
+    log "No MIG UUIDs found, skipping app remap"
     exit 0
 fi
 
-# Find first compute (non-gfx) UUID by matching position
-# Exclude only +gfx profiles (47, 35, 32) — all others are compute-capable
-COMPUTE_UUID=""
-for i in "${!GI_PROFILES[@]}"; do
-    pid="${GI_PROFILES[$i]}"
-    if [ "$pid" != "47" ] && [ "$pid" != "35" ] && [ "$pid" != "32" ]; then
-        if [ "$i" -lt "${#ALL_MIG_UUIDS[@]}" ]; then
-            COMPUTE_UUID="${ALL_MIG_UUIDS[$i]}"
-            break
-        fi
-    fi
-done
-
-if [ -z "$COMPUTE_UUID" ]; then
-    log "Could not determine compute-only MIG UUID, skipping app remap"
-    exit 0
-fi
-
-log "First compute-only MIG UUID: $COMPUTE_UUID"
+# Use first MIG UUID for app remapping
+COMPUTE_UUID="${ALL_MIG_UUIDS[0]}"
+log "First MIG UUID: $COMPUTE_UUID"
 
 # --- Update TrueNAS app GPU assignments ---
 # Wait for middleware to be ready (it may still be starting)
