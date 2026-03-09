@@ -190,11 +190,10 @@ fi
 
 systemctl daemon-reload
 
-# Re-enable Docker with NVIDIA support now — any sysext remount triggered by
-# docker.update will complete long before MIG enumeration (~250 lines later).
-echo "Re-enabling NVIDIA in Docker..."
-midclt call docker.update '{"nvidia": true}'
-echo "[diag] After docker.update + sysext merge: nvidia-smi exists=$(ls /usr/bin/nvidia-smi 2>&1)"
+# NOTE: Docker re-enable is deferred until after ALL nvidia-smi usage.
+# midclt call docker.update '{"nvidia": true}' triggers the middleware to
+# asynchronously unmerge+remerge sysext ~60-90s later, which removes nvidia.
+echo "[diag] After sysext merge: nvidia-smi exists=$(ls /usr/bin/nvidia-smi 2>&1)"
 
 # Enable GPU persistence mode
 if systemctl list-unit-files nvidia-persistenced.service &>/dev/null; then
@@ -400,6 +399,15 @@ MIGEOF
         && echo "nvidia-mig-setup.service enabled" \
         || echo "WARNING: Could not enable nvidia-mig-setup.service"
 
+    # Ensure sysext overlay is still intact before MIG operations
+    # (middleware async sysext remount from docker.update can undo our merge)
+    if ! [ -x /usr/bin/nvidia-smi ]; then
+        echo "[diag] nvidia-smi disappeared before MIG enable — re-merging sysext..."
+        systemd-sysext merge
+        systemctl daemon-reload
+        echo "[diag] After re-merge: $(ls /usr/bin/nvidia-smi 2>&1)"
+    fi
+
     # Enable MIG mode on the GPU
     MIG_CURRENT=$(/usr/bin/nvidia-smi --query-gpu=mig.mode.current --format=csv,noheader 2>/dev/null || echo "N/A")
     if [ "$MIG_CURRENT" != "Enabled" ]; then
@@ -434,6 +442,15 @@ MIGEOF
             # Use MIG_PROFILES order (matches creation order = UUID order)
             echo "[diag] Before MIG enumeration: nvidia-smi exists=$(ls /usr/bin/nvidia-smi 2>&1)"
             echo "[diag] sysext status: $(systemd-sysext status 2>&1 | head -3)"
+
+            # Ensure sysext overlay is still intact (middleware async remount can undo it)
+            if ! [ -x /usr/bin/nvidia-smi ]; then
+                echo "[diag] nvidia-smi disappeared before enumeration — re-merging sysext..."
+                systemd-sysext merge
+                systemctl daemon-reload
+                echo "[diag] After re-merge: nvidia-smi exists=$(ls /usr/bin/nvidia-smi 2>&1)"
+                echo "[diag] sysext status: $(systemd-sysext status 2>&1 | head -3)"
+            fi
 
             mapfile -t MIG_UUIDS < <(/usr/bin/nvidia-smi -L 2>/dev/null | grep 'MIG' | sed -n 's/.*UUID: \(MIG-[^)]*\)).*/\1/p')
             mapfile -t MIG_NAMES < <(/usr/bin/nvidia-smi -L 2>/dev/null | grep 'MIG' | sed 's/.*MIG /MIG /' | sed 's/[[:space:]]*Device.*//')
@@ -489,9 +506,12 @@ except Exception:
     pass
 " 2>/dev/null)
 
-            # Wait for Docker and app service to be ready
-            # (Docker was re-enabled right after sysext merge — it should be settling now)
+            # Now re-enable Docker — all nvidia-smi usage is done
             echo ""
+            echo "Re-enabling NVIDIA in Docker..."
+            midclt call docker.update '{"nvidia": true}'
+
+            # Wait for Docker and app service to be ready
             echo "Waiting for Docker and app service to come up (this can take 60-90s)..."
             MAX_WAIT=18  # 18 × 5s = 90s
             APP_COUNT=0
@@ -736,10 +756,9 @@ except Exception:
     fi
 fi
 
-# Ensure Docker is re-enabled (safety net for non-MIG path)
-if [ -z "$MIG_PROFILES" ]; then
-    midclt call docker.update '{"nvidia": true}' 2>/dev/null || true
-fi
+# Ensure Docker is re-enabled (safety net — MIG path does this above,
+# but non-MIG path or early exits may not have)
+midclt call docker.update '{"nvidia": true}' 2>/dev/null || true
 
 echo ""
 echo "=== Persistence setup complete ==="
