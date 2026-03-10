@@ -23,7 +23,7 @@ with open('${MANIFEST}') as f:
     manifest = yaml.safe_load(f)
 
 # Source packages to skip building
-skip_sources = {'kernel-dbg', 'openzfs-dbg', 'scst-dbg', 'truenas_spdk', 'scst'}
+skip_sources = {'kernel-dbg', 'openzfs-dbg', 'scst-dbg', 'truenas_spdk', 'scst', 'middlewared-docs', 'midcli'}
 
 # Binary packages to skip installing in rootfs
 skip_binaries = {
@@ -75,4 +75,4 @@ with open('${MANIFEST}', 'w') as f:
 print('Unnecessary packages stripped from manifest')
 "
 
-echo "Done. Removed: kernel-dbg, openzfs-dbg, scst-dbg, scst, truenas_spdk"
+echo "Done. Removed: kernel-dbg, openzfs-dbg, scst-dbg, scst, truenas_spdk, middlewared-docs, midcli"

@@ -19,6 +19,8 @@ DUMMY_PACKAGES=(
     "scst"
     "iscsi-scst"
     "scstadmin"
+    "middlewared-docs"
+    "midcli"
 )
 
 TMPDIR=$(mktemp -d)
